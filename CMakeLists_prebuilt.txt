@@ -1,0 +1,179 @@
+cmake_minimum_required(VERSION 3.10)
+project(hv_toolkit VERSION 1.0.0 LANGUAGES CXX)
+
+# 设置C++标准
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 查找依赖包
+find_package(OpenCV REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+
+# 查找Metavision SDK
+find_package(MetavisionSDK REQUIRED COMPONENTS base)
+
+# 定义预编译库路径
+get_filename_component(PARENT_DIR "${CMAKE_CURRENT_SOURCE_DIR}" DIRECTORY)
+set(HV_TOOLKIT_LIB_DIR "${PARENT_DIR}/lib")
+set(HV_TOOLKIT_INCLUDE_DIR "${PARENT_DIR}/include")
+
+# 检查预编译库是否存在
+set(REQUIRED_LIBS
+    "${HV_TOOLKIT_LIB_DIR}/libhv_camera.so"
+    "${HV_TOOLKIT_LIB_DIR}/libhv_evt2_codec.so"
+    "${HV_TOOLKIT_LIB_DIR}/libhv_event_writer.so"
+    "${HV_TOOLKIT_LIB_DIR}/libhv_event_reader.so"
+)
+
+foreach(lib ${REQUIRED_LIBS})
+    if(NOT EXISTS ${lib})
+        message(FATAL_ERROR "Required prebuilt library not found: ${lib}")
+    endif()
+endforeach()
+
+# 创建导入的库目标
+# hv_camera库
+add_library(hv_camera SHARED IMPORTED)
+set_target_properties(hv_camera PROPERTIES
+    IMPORTED_LOCATION "${HV_TOOLKIT_LIB_DIR}/libhv_camera.so"
+    INTERFACE_INCLUDE_DIRECTORIES "${HV_TOOLKIT_INCLUDE_DIR}"
+    INTERFACE_LINK_LIBRARIES "${OpenCV_LIBS};${LIBUSB_LIBRARIES};${MetavisionSDK_LIBRARIES};pthread"
+)
+
+# hv_evt2_codec库
+add_library(hv_evt2_codec SHARED IMPORTED)
+set_target_properties(hv_evt2_codec PROPERTIES
+    IMPORTED_LOCATION "${HV_TOOLKIT_LIB_DIR}/libhv_evt2_codec.so"
+    INTERFACE_INCLUDE_DIRECTORIES "${HV_TOOLKIT_INCLUDE_DIR}"
+    INTERFACE_LINK_LIBRARIES "${MetavisionSDK_LIBRARIES}"
+)
+
+# hv_event_writer库
+add_library(hv_event_writer SHARED IMPORTED)
+set_target_properties(hv_event_writer PROPERTIES
+    IMPORTED_LOCATION "${HV_TOOLKIT_LIB_DIR}/libhv_event_writer.so"
+    INTERFACE_INCLUDE_DIRECTORIES "${HV_TOOLKIT_INCLUDE_DIR}"
+    INTERFACE_LINK_LIBRARIES "${MetavisionSDK_LIBRARIES};hv_evt2_codec"
+)
+
+# hv_event_reader库
+add_library(hv_event_reader SHARED IMPORTED)
+set_target_properties(hv_event_reader PROPERTIES
+    IMPORTED_LOCATION "${HV_TOOLKIT_LIB_DIR}/libhv_event_reader.so"
+    INTERFACE_INCLUDE_DIRECTORIES "${HV_TOOLKIT_INCLUDE_DIR}"
+    INTERFACE_LINK_LIBRARIES "${MetavisionSDK_LIBRARIES};hv_evt2_codec"
+)
+
+# 为库添加别名以支持 find_package
+add_library(HVToolkit::hv_camera ALIAS hv_camera)
+add_library(HVToolkit::hv_evt2_codec ALIAS hv_evt2_codec)
+add_library(HVToolkit::hv_event_writer ALIAS hv_event_writer)
+add_library(HVToolkit::hv_event_reader ALIAS hv_event_reader)
+
+# GNUInstallDirs for standard installation paths
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+# 安装预编译库文件
+install(FILES
+    "${HV_TOOLKIT_LIB_DIR}/libhv_camera.so"
+    "${HV_TOOLKIT_LIB_DIR}/libhv_evt2_codec.so"
+    "${HV_TOOLKIT_LIB_DIR}/libhv_event_writer.so"
+    "${HV_TOOLKIT_LIB_DIR}/libhv_event_reader.so"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    COMPONENT runtime
+)
+
+# 安装头文件
+install(DIRECTORY ${HV_TOOLKIT_INCLUDE_DIR}/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/hv_toolkit
+    FILES_MATCHING PATTERN "*.h"
+)
+
+# 创建导入目标文件
+set(TARGETS_FILE "${CMAKE_CURRENT_BINARY_DIR}/HVToolkitTargets.cmake")
+file(WRITE ${TARGETS_FILE}
+"# Generated HVToolkit targets file\n"
+"\n"
+"# Compute the installation prefix relative to this file.\n"
+"get_filename_component(_IMPORT_PREFIX \"\${CMAKE_CURRENT_LIST_FILE}\" PATH)\n"
+"get_filename_component(_IMPORT_PREFIX \"\${_IMPORT_PREFIX}\" PATH)\n"
+"get_filename_component(_IMPORT_PREFIX \"\${_IMPORT_PREFIX}\" PATH)\n"
+"get_filename_component(_IMPORT_PREFIX \"\${_IMPORT_PREFIX}\" PATH)\n"
+"if(_IMPORT_PREFIX STREQUAL \"/\")\n"
+"  set(_IMPORT_PREFIX \"\")\n"
+"endif()\n"
+"\n"
+"# Create imported targets\n"
+"add_library(HVToolkit::hv_camera SHARED IMPORTED)\n"
+"set_target_properties(HVToolkit::hv_camera PROPERTIES\n"
+"    IMPORTED_LOCATION \"\${_IMPORT_PREFIX}/lib/libhv_camera.so\"\n"
+"    INTERFACE_INCLUDE_DIRECTORIES \"\${_IMPORT_PREFIX}/include/hv_toolkit\"\n"
+")\n"
+"\n"
+"add_library(HVToolkit::hv_evt2_codec SHARED IMPORTED)\n"
+"set_target_properties(HVToolkit::hv_evt2_codec PROPERTIES\n"
+"    IMPORTED_LOCATION \"\${_IMPORT_PREFIX}/lib/libhv_evt2_codec.so\"\n"
+"    INTERFACE_INCLUDE_DIRECTORIES \"\${_IMPORT_PREFIX}/include/hv_toolkit\"\n"
+")\n"
+"\n"
+"add_library(HVToolkit::hv_event_writer SHARED IMPORTED)\n"
+"set_target_properties(HVToolkit::hv_event_writer PROPERTIES\n"
+"    IMPORTED_LOCATION \"\${_IMPORT_PREFIX}/lib/libhv_event_writer.so\"\n"
+"    INTERFACE_INCLUDE_DIRECTORIES \"\${_IMPORT_PREFIX}/include/hv_toolkit\"\n"
+"    INTERFACE_LINK_LIBRARIES \"HVToolkit::hv_evt2_codec\"\n"
+")\n"
+"\n"
+"add_library(HVToolkit::hv_event_reader SHARED IMPORTED)\n"
+"set_target_properties(HVToolkit::hv_event_reader PROPERTIES\n"
+"    IMPORTED_LOCATION \"\${_IMPORT_PREFIX}/lib/libhv_event_reader.so\"\n"
+"    INTERFACE_INCLUDE_DIRECTORIES \"\${_IMPORT_PREFIX}/include/hv_toolkit\"\n"
+"    INTERFACE_LINK_LIBRARIES \"HVToolkit::hv_evt2_codec\"\n"
+")\n"
+"\n"
+"# Cleanup temporary variables.\n"
+"set(_IMPORT_PREFIX)\n"
+)
+
+# 安装导入目标文件
+install(FILES ${TARGETS_FILE}
+    DESTINATION share/cmake/HVToolkit
+    COMPONENT development
+)
+
+# 生成配置文件
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/HVToolkitConfig_prebuilt.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/HVToolkitConfig.cmake"
+    INSTALL_DESTINATION share/cmake/HVToolkit
+    PATH_VARS CMAKE_INSTALL_INCLUDEDIR
+)
+
+# 生成版本文件
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/HVToolkitConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+
+# 安装配置文件
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/HVToolkitConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/HVToolkitConfigVersion.cmake"
+    DESTINATION share/cmake/HVToolkit
+    COMPONENT development
+)
+
+# 生成 pkg-config 文件
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/hv_toolkit_prebuilt.pc.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/hv_toolkit.pc"
+    @ONLY
+)
+
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/hv_toolkit.pc"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
+    COMPONENT development
+)

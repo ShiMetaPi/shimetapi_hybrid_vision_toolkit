@@ -1,0 +1,56 @@
+# Build directories
+sample/*/build/
+/build*/
+/_build*/
+!lib/*.so
+# Compiled object files
+*.o
+*.obj
+*.a
+*.la
+*.lo
+
+# Executables
+*.exe
+*.out
+*.app
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+CMakeOutput.log
+CMakeError.log
+
+
+# Test and output files
+*.h5
+*.tmp
+*.log
+*.raw
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.clangd/
+compile_commands.json
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak
+*.orig
+
+# Package files
+*.tar.gz
+*.zip
+*.deb
+*.rpm
+
+

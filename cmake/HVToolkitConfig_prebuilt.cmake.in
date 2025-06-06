@@ -1,0 +1,22 @@
+@PACKAGE_INIT@
+
+# HV Toolkit CMake Config File (Prebuilt Libraries)
+
+include(CMakeFindDependencyMacro)
+
+# Find required dependencies
+find_dependency(OpenCV REQUIRED)
+find_dependency(PkgConfig REQUIRED)
+if(NOT TARGET PkgConfig::libusb)
+    pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+endif()
+find_dependency(MetavisionSDK REQUIRED COMPONENTS base)
+
+# Include exported targets
+include("${CMAKE_CURRENT_LIST_DIR}/HVToolkitTargets.cmake")
+
+# Set variables for compatibility
+set(HVToolkit_LIBRARIES HVToolkit::hv_camera HVToolkit::hv_evt2_codec HVToolkit::hv_event_reader HVToolkit::hv_event_writer)
+set(HVToolkit_INCLUDE_DIRS "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@/hv_toolkit")
+
+check_required_components(HVToolkit)

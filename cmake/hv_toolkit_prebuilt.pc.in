@@ -1,0 +1,11 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: HV Toolkit (Prebuilt)
+Description: HV Toolkit - Event Camera SDK (Prebuilt Libraries)
+Version: @PROJECT_VERSION@
+Requires: opencv4 libusb-1.0
+Libs: -L${libdir} -lhv_camera -lhv_evt2_codec -lhv_event_writer -lhv_event_reader
+Cflags: -I${includedir}/hv_toolkit
