@@ -5,6 +5,8 @@ project(hv_camera_record VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 查找OpenCV
+find_package(OpenCV REQUIRED)
 # 查找HV Toolkit 
 find_package(HVToolkit REQUIRED)
 
@@ -16,4 +18,5 @@ target_link_libraries(hv_camera_record
     PRIVATE
         HVToolkit::hv_camera
         HVToolkit::hv_event_writer
+        ${OpenCV_LIBS}
 )
