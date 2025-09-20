@@ -5,17 +5,18 @@ project(HVToolkitExample VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 查找OpenCV
-find_package(OpenCV REQUIRED)
 # 查找HV Toolkit 
 find_package(HVToolkit REQUIRED)
+# 查找OpenCV
+find_package(OpenCV REQUIRED)
 
 # 创建示例可执行文件
 add_executable(hv_example hv_toolkit_get_started.cpp)
 
-# 链接HV Toolkit 
+# 链接HV Toolkit和OpenCV
 target_link_libraries(hv_example
     PRIVATE
         HVToolkit::hv_camera
         ${OpenCV_LIBS}
 )
+

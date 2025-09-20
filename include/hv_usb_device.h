@@ -74,6 +74,18 @@ public:
      */
     bool bulkTransfer(uint8_t endpoint, unsigned char* data, int length, int* transferred, unsigned int timeout);
 
+    /**
+     * 清除设备冗余数据
+     * @return 是否清除成功
+     */
+    bool clearSharedMemory() ;
+
+    /**
+     * 获取USB设备句柄
+     * @return USB设备句柄
+     */
+    libusb_device_handle* getHandle() const;
+
 private:
     // USB设备相关成员
     const uint16_t vendor_id_;

@@ -1,20 +1,13 @@
-/*
- * Copyright 2025 ShiMetaPi
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0 
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 #include <iostream>
 #include <hv_camera.h>
+#include <chrono>
+#include <iostream>
+#include <atomic>
+
+// 放在类外或类内 static，确保所有回调共享
+static std::atomic<int>   g_counter{0};                           // 本周期内的回调次数
+static std::chrono::steady_clock::time_point g_lastPrint =
+        std::chrono::steady_clock::now();                          // 上一次打印时间
 
 int main() {
     std::cout << "HV Toolkit Example" << std::endl;
@@ -29,6 +22,18 @@ int main() {
         // 定义事件回调函数
         auto eventCallback = [](const std::vector<Metavision::EventCD>& events) {
             std::cout << "Received " << events.size() << " events" << std::endl;
+
+             // ---------------- 新增计数逻辑 ----------------
+            ++g_counter;
+
+            auto now = std::chrono::steady_clock::now();
+            if (now - g_lastPrint >= std::chrono::seconds(1)) {
+            // 把 g_lastPrint 和 g_counter 一起更新，防止并发重复打印
+            int fps = g_counter.exchange(0);          // 取出并清零
+            g_lastPrint = now;
+
+            std::cout << "[FPS] " << fps << " callback(s)/second" << std::endl;
+            }
         };
         
         // 定义图像回调函数

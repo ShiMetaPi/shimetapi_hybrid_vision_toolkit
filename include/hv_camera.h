@@ -22,6 +22,8 @@
 #include <mutex>
 #include <vector>
 #include <memory>
+#include <queue>
+#include <condition_variable>
 
 // 引入Metavision事件数据结构
 #include <metavision/sdk/base/events/event_cd.h>
@@ -33,7 +35,7 @@ namespace hv {
 }
 
 // 定义常量
-#define HV_BUF_LEN (4096 * 64)
+#define HV_BUF_LEN (4096 * 128)
 #define HV_SUB_FULL_BYTE_SIZE (32768)
 #define HV_SUB_VALID_BYTE_SIZE (29200)
 #define HV_EVS_WIDTH (768)
@@ -118,6 +120,12 @@ public:
      * @return 图像数据
      */
     cv::Mat getLatestImage() const;
+    
+    /**
+     * 清空事件数据队列
+     * 用于在开始录制前清空缓存的事件数据
+     */
+    void clearEventQueue();
 
 private:
     // USB设备
@@ -139,8 +147,26 @@ private:
     // 互斥锁
     mutable std::mutex image_mutex_;
     
+    // 事件数据缓存相关
+    struct EventDataBuffer {
+        std::unique_ptr<uint8_t[]> data;
+        size_t size;
+        EventDataBuffer(size_t s) : data(std::make_unique<uint8_t[]>(s)), size(s) {}
+    };
+    
+    std::queue<std::unique_ptr<EventDataBuffer>> event_data_queue_;
+    std::mutex event_queue_mutex_;
+    std::condition_variable event_queue_cv_;
+    bool event_processing_running_;
+    static const size_t MAX_QUEUE_SIZE = 6000; // 最大缓存队列大小
+    
+    // 性能优化：预分配事件数组
+    std::vector<EventCD> reusable_event_array_;
+    static const size_t ESTIMATED_EVENTS_PER_FRAME = 10000; // 预估每帧事件数
+
     // 线程函数
-    void eventThreadFunc();
+    void eventThreadFunc();           // USB接收线程
+    void eventProcessingThreadFunc(); // 事件处理线程
     void imageThreadFunc();
     
     // 处理事件数据
