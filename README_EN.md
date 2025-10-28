@@ -111,6 +111,66 @@ make
 Program running screenshot
 ![Alternative text](./assets/imgs/run05.jpg)
 
+### Python Sample Programs
+
+#### Install Python Dependencies
+
+```bash
+# Install Python base dependencies
+sudo apt update
+sudo apt install -y python3-opencv python3-pip python3-numpy
+
+# Install Metavision SDK (if not already installed)
+curl -L https://propheseeai.jfrog.io/artifactory/api/security/keypair/prophesee-gpg/public >/tmp/propheseeai.jfrog.op.asc
+sudo cp /tmp/propheseeai.jfrog.op.asc /etc/apt/trusted.gpg.d
+sudo add-apt-repository 'https://propheseeai.jfrog.io/artifactory/openeb-debian/'
+sudo apt update
+sudo apt -y install metavision-openeb
+
+# Install h5py (Metavision dependency)
+pip3 install h5py --user
+```
+
+#### Configure USB Device Permissions
+
+```bash
+# Grant USB device access permissions (run after camera is connected)
+sudo chmod -R 777 /dev/bus/usb/
+```
+
+#### Running Python Samples
+
+##### 1. Codec Test (No Hardware Required)
+
+```bash
+cd sample/python/hv_toolkit_encoder
+python3 test_codec.py
+```
+
+##### 2. Camera Getting Started (Camera Required)
+
+```bash
+cd sample/python/hv_toolkit_get_started
+python3 hv_toolkit_get_started.py
+# Press q to exit
+```
+
+##### 3. Recording Sample (Camera Required)
+
+```bash
+cd sample/python/hv_toolkit_record
+python3 recode_test.py
+# Records for 15 seconds or press Ctrl+C to stop
+```
+
+##### 4. Event Reader Sample (Requires Recorded Event File)
+
+```bash
+cd sample/python/hv_toolkit_reader_test
+python3 hv_toolkit_reader_test.py ../hv_toolkit_record/recorded_events.raw
+# Press q to exit
+```
+
 Running `metavision_sdk_test` sample program
 
 ```bash
@@ -168,13 +228,23 @@ hv_toolkit/
 │   ├── hv_evt2_codec.h         # EVT2 codec
 │   └── hv_usb_device.h         # USB device class header
 ├── lib/                        # Compiled library files
-│   └── libhv_camera.so         # Dynamic link library
+│   ├── libhv_camera.so         # Dynamic link library
+│   └── Python/                 # Python library files
+│       ├── hv_camera_python.so
+│       ├── hv_event_reader_python.so
+│       ├── hv_event_writer_python.so
+│       └── hv_evt2_codec_python.so
 ├── sample/                     # Sample programs
 │   ├── hv_camera_metavision_sample/      # Metavision integration sample
 │   ├── hv_camera_record/                 # Event recording sample
 │   ├── hv_toolkit_get_started/           # Getting started sample
 │   ├── hv_toolkit_viewer/                # Event visualization player
-│   └── metavision_sdk_test/              # Metavision SDK test
+│   ├── metavision_sdk_test/              # Metavision SDK test
+│   └── python/                           # Python sample programs
+│       ├── hv_toolkit_encoder/           # Codec test
+│       ├── hv_toolkit_get_started/       # Camera getting started
+│       ├── hv_toolkit_record/            # Recording sample
+│       └── hv_toolkit_reader_test/       # Event reader
 └── assets/                    # Resource files
 ```
 
