@@ -96,6 +96,66 @@ make
 程序运行截图
 ![替代文本](./assets/imgs/run05.jpg)
 
+### Python 示例程序
+
+#### 安装 Python 依赖
+
+```bash
+# 安装 Python 基础依赖
+sudo apt update
+sudo apt install -y python3-opencv python3-pip python3-numpy
+
+# 安装 Metavision SDK（如果还没有安装）
+curl -L https://propheseeai.jfrog.io/artifactory/api/security/keypair/prophesee-gpg/public >/tmp/propheseeai.jfrog.op.asc
+sudo cp /tmp/propheseeai.jfrog.op.asc /etc/apt/trusted.gpg.d
+sudo add-apt-repository 'https://propheseeai.jfrog.io/artifactory/openeb-debian/'
+sudo apt update
+sudo apt -y install metavision-openeb
+
+# 安装 h5py（Metavision 依赖）
+pip3 install h5py --user
+```
+
+#### 配置 USB 设备权限
+
+```bash
+# 赋予USB设备访问权限（相机连接后执行）
+sudo chmod -R 777 /dev/bus/usb/
+```
+
+#### 运行 Python 示例
+
+##### 1. 编解码器测试（无需硬件）
+
+```bash
+cd sample/python/hv_toolkit_encoder
+python3 test_codec.py
+```
+
+##### 2. 相机入门示例（需要相机）
+
+```bash
+cd sample/python/hv_toolkit_get_started
+python3 hv_toolkit_get_started.py
+# 按 q 键退出
+```
+
+##### 3. 录制示例（需要相机）
+
+```bash
+cd sample/python/hv_toolkit_record
+python3 recode_test.py
+# 录制15秒或按 Ctrl+C 停止
+```
+
+##### 4. 事件读取示例（需要录制的事件文件）
+
+```bash
+cd sample/python/hv_toolkit_reader_test
+python3 hv_toolkit_reader_test.py ../hv_toolkit_record/recorded_events.raw
+# 按 q 键退出
+```
+
 ### 构建基于Openeb项目
 
 #### `metavision_sdk_test`示例程序
@@ -157,13 +217,23 @@ hv_toolkit/
 │   ├── hv_evt2_codec.h         # EVT2编解码器
 │   └── hv_usb_device.h         # USB设备类头文件
 ├── lib/                        # 编译后的库文件
-│   └── libhv_camera.so         # 动态链接库
+│   ├── libhv_camera.so         # 动态链接库
+│   └── Python/                 # Python库文件
+│       ├── hv_camera_python.so
+│       ├── hv_event_reader_python.so
+│       ├── hv_event_writer_python.so
+│       └── hv_evt2_codec_python.so
 ├── sample/                     # 示例程序
 │   ├── hv_camera_metavision_sample/      # Metavision集成示例
 │   ├── hv_camera_record/                 # 事件录制示例
 │   ├── hv_toolkit_get_started/           # 入门示例
 │   ├── hv_toolkit_viewer/                # 事件可视化播放器
-│   └── metavision_sdk_test/              # Metavision SDK测试
+│   ├── metavision_sdk_test/              # Metavision SDK测试
+│   └── python/                           # Python示例程序
+│       ├── hv_toolkit_encoder/           # 编解码测试
+│       ├── hv_toolkit_get_started/       # 相机入门
+│       ├── hv_toolkit_record/            # 录制示例
+│       └── hv_toolkit_reader_test/       # 事件读取
 └── assets/                    # 资源文件
 ```
 
