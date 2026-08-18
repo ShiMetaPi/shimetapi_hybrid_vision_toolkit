@@ -80,10 +80,24 @@ ls out/x86_64/build/samples/cpp/get_started/hv_sample_get_started  # 示例可�
 
 #### S100（ARM MIPI，交叉编译）
 
-前置：安装系统 aarch64 交叉编译器
+前置：下载 + 解压 S100 工具链到 /opt/
 
 ```bash
-sudo apt-get install g++-aarch64-linux-gnu
+curl -fO http://archive.d-robotics.cc/toolchain/arm-gnu-toolchain-11.3.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+sudo tar -xvf arm-gnu-toolchain-11.3.rel1-x86_64-aarch64-none-linux-gnu.tar.xz -C /opt
+```
+
+加入 PATH
+
+```bash
+export PATH=$PATH:/opt/arm-gnu-toolchain-11.3.rel1-x86_64-aarch64-none-linux-gnu/bin
+```
+
+S100_SDK仓库地址：https://github.com/ShiMetaPi/evs_device_vendor_sdk.git
+拉取仓库后，设 S100 sysroot（板级库路径）
+
+```bash
+export S100_SYSROOT=evs_device_vendor_sdk/source/hobot-multimedia/debian/usr
 ```
 
 构建：
@@ -107,7 +121,7 @@ file out/s100/build/samples/cpp/get_started/hv_sample_get_started  # 应为 ELF 
 # 把本仓库作为子目录，或 install 后使用
 add_subdirectory(shimetapi_Hybrid_vision_toolkit)
 target_link_libraries(your_app PRIVATE
-    HVToolkit::shimetapi_hv HVToolkit::shimetapi_codec HVToolkit::shimetapi_io)
+HVToolkit::shimetapi_hv HVToolkit::shimetapi_codec HVToolkit::shimetapi_io)
 ```
 
 安装到系统（头文件 + 当前架构的库）：
