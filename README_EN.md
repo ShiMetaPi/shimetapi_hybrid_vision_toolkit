@@ -1,4 +1,4 @@
-# HV Toolkit
+# 01 HV Toolkit
 
 **Language**: [中文](README.md) | **English**
 
@@ -14,6 +14,7 @@ HV Toolkit (ShiMetaPi Hybrid Vision Toolkit) **v2.0** is a high-performance C++1
 - **Self-contained codecs**: EVT2 / EVT3 / MIPI RAW8 `Encoder`/`Decoder`, no external SDK.
 - **IO**: `EventReader` / `EventWriter` / `HybridWriter` / `HybridReader` (RAW file IO + mixed EVS/APS record/playback).
 - **Python bindings** (optional): a single `hv_toolkit` module (pybind11), prebuilt for x86_64 (Python 3.10).
+- **Runtime MIPI fps tiers**: `DeviceConfig.evs_fps` (120/240/300/500/750/1000, applied at Init — no library rebuild).
 - **Zero third-party event-SDK dependencies**: the public surface is fully decoupled from legacy third-party event SDKs.
 
 ## 📋 Specifications
@@ -25,37 +26,43 @@ HV Toolkit (ShiMetaPi Hybrid Vision Toolkit) **v2.0** is a high-performance C++1
 - **Transport**: USB 3.0 (USB backend) / MIPI-CSI (MIPI backend) / TCP (Ethernet backend)
 - **Event formats**: EVT2 / EVT3 (Prophesee EventCD-compatible semantics)
 
+## 🔧 Dependencies
+
+| Dependency | Purpose | Platform |
+| --- | --- | --- |
+| **libusb-1.0** (`libusb-1.0-0`) | USB backend runtime | x86_64 |
+| **aarch64 cross toolchain** (`g++-aarch64-linux-gnu`) | cross-compiling S100 samples | S100 (cross) |
+| **OpenCV** | `viewer` / `player` / `live_record_display` samples (cross builds use the bundled `third_party/aarch64_opencv`) | samples, optional |
+
+> v2.0 has **no third-party event SDK dependency** — the codecs are an independent clean-room implementation. OpenCV is only used by sample visualizers, not the core.
+
+## 🚀 Quick Start
+
 ### Requirements
 
 - **C++ standard**: C++17 or newer
 - **CMake**: 3.16+
 - **OS**: Linux — x86_64 (USB + Ethernet backends); aarch64/S100 (MIPI + Ethernet backends)
 
-## 🔧 Dependencies
+### Build
 
-| Dependency | Purpose | Required |
-| --- | --- | --- |
-| **libusb-1.0** | USB backend runtime (`libusb-1.0-0`) | USB backend |
-| **OpenCV** | `viewer` / `player` / `live_record_display` samples | Samples, optional |
+The prebuilt libraries ship with the repository; building only compiles the samples
+(linking `lib/<arch>`), with the target architecture selected automatically by CMake.
 
-> v2.0 has **no third-party event SDK dependency** — the codecs are an independent clean-room implementation. OpenCV is only used by sample visualizers, not the core.
+#### x86_64 (USB)
+
+Prerequisites:
 
 ```bash
-# Ubuntu/Debian
 sudo apt-get update
 sudo apt-get install build-essential cmake libusb-1.0-0 libopencv-dev
 ```
 
-## 🚀 Quick Start
-
-### Build the samples (against the prebuilt libraries)
-
-The prebuilt libraries ship with the repository; there is nothing to compile for the SDK itself. CMake picks `lib/x86_64` (on x86_64) or `lib/s100` (on aarch64) automatically based on the target architecture:
+Build:
 
 ```bash
 cd shimetapi_Hybrid_vision_toolkit
 ./run.sh build                  # = cmake configure + build (native arch by default)
-./run.sh --list                 # show prebuilt architectures and status
 ```
 
 Or call cmake directly (equivalent):
@@ -65,25 +72,39 @@ cmake -B out/x86_64/build -S .      # build dir out/<arch>/build (same as run.sh
 cmake --build out/x86_64/build -j    # builds the 7 sample executables
 ```
 
-Cross-building samples for the S100 board (e.g. from x86_64) — links the aarch64 libs in `lib/s100`:
+Verify outputs:
 
 ```bash
-./run.sh build s100    # needs a system aarch64 cross compiler (apt install g++-aarch64-linux-gnu)
-                        # the toolchain file is injected automatically; override with -DCMAKE_TOOLCHAIN_FILE=...
-# OpenCV samples use the bundled aarch64 OpenCV in third_party/ (skipped automatically if absent)
+ls out/x86_64/build/libshimetapi_*.so                        # 4 libs bundled at build time
+ls out/x86_64/build/samples/cpp/get_started/hv_sample_get_started  # sample executable
 ```
 
-Sample executables embed an rpath — run them directly (no `LD_LIBRARY_PATH` needed):
+#### S100 (ARM MIPI, cross-compile)
+
+Prerequisites:
 
 ```bash
-./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started
-./out/s100/build/samples/cpp/get_started/hv_sample_get_started    # s100 cross output
+sudo apt-get install g++-aarch64-linux-gnu
+```
+
+Build:
+
+```bash
+./run.sh build s100    # toolchain file injected automatically (toolchains/toolchain-aarch64-linux-gnu.cmake)
+                        # override with -DCMAKE_TOOLCHAIN_FILE=<your-toolchain.cmake>
+```
+
+Verify outputs:
+
+```bash
+ls out/s100/build/libshimetapi_*.so
+file out/s100/build/samples/cpp/get_started/hv_sample_get_started  # should be ELF aarch64
+# OpenCV samples use the bundled third_party/aarch64_opencv — all 7 build
 ```
 
 Link from your own project (CMake):
 
 ```cmake
-# Either add this repo as a subdirectory, or install it and use find_package
 add_subdirectory(shimetapi_Hybrid_vision_toolkit)
 target_link_libraries(your_app PRIVATE
     HVToolkit::shimetapi_hv HVToolkit::shimetapi_codec HVToolkit::shimetapi_io)
@@ -92,8 +113,17 @@ target_link_libraries(your_app PRIVATE
 Install to the system (headers + libraries for the current architecture):
 
 ```bash
-cmake --install out/x86_64/build            # default: /usr/local
-cmake --install out/x86_64/build --prefix /your/prefix
+./run.sh install x86_64                          # default /usr/local (sudo)
+./run.sh install x86_64 /your/prefix             # custom prefix
+```
+
+#### Show supported architectures
+
+```bash
+./run.sh --list
+# ARCH    STATUS        PREBUILT LIBS
+# x86_64   ready         .../lib/x86_64
+# s100     ready         .../lib/s100
 ```
 
 ### Running the samples
@@ -104,86 +134,85 @@ backend and switch via `--mipi` (MIPI EVS-only) / `--mipi-hvs` (MIPI dual-VC,
 on the S100 board); in USB mode the first two positional args set VID/PID
 (default `0x1d6b 0x0105`). Paths below use x86_64; on S100 use `out/s100/build`.
 
-#### `get_started` — minimal capture (Init → StartStream → GetFrame ×10)
+#### x86_64 (USB)
 
 ```bash
-./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started                 # USB, default VID/PID 0x1d6b:0x0105
-./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started 0x1d6b 0x0105   # USB, explicit VID PID
-./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started --mipi          # MIPI backend (sensor_index=9)
+# get_started — minimal capture
+./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started                 # default 0x1d6b:0x0105
+./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started 0x1d6b 0x0105   # explicit VID PID
 ```
 
-Output: `get_started: frame N evs=xxx bytes` per frame.
-
-#### `callback` — dual-callback demo (event + APS async callbacks)
-
 ```bash
-./out/x86_64/build/samples/cpp/callback/hv_sample_callback                        # USB, 2 seconds
-./out/x86_64/build/samples/cpp/callback/hv_sample_callback --mipi-hvs             # MIPI dual-VC (on S100)
+# callback — dual-callback demo (2 seconds)
+./out/x86_64/build/samples/cpp/callback/hv_sample_callback
+# output: callback: events=N images=M
+
+# record — EVS + APS mixed recording (writes /tmp/hv_record.raw + .avi)
+./out/x86_64/build/samples/cpp/record/hv_sample_record
+
+# viewer — live capture with decode counting
+./out/x86_64/build/samples/cpp/viewer/hv_sample_viewer
+# output: viewer: decoded N events
+
+# bench_hw — USB benchmark (default 5 s)
+./out/x86_64/build/samples/cpp/bench_hw/hv_sample_bench_hw
+./out/x86_64/build/samples/cpp/bench_hw/hv_sample_bench_hw 0x1d6b 0x0105 10   # explicit VID PID and duration
 ```
 
-Output: `callback: events=N images=M` (the legacy `--mipi` backend has no APS; images stays 0).
-
-#### `record` — EVS + APS mixed recording (writes /tmp/hv_record.raw + .avi)
-
 ```bash
-./out/x86_64/build/samples/cpp/record/hv_sample_record                    # USB, 10 frames
-./out/x86_64/build/samples/cpp/record/hv_sample_record --mipi-hvs         # MIPI dual-VC recording
-```
-
-Output: `record: wrote /tmp/hv_record.raw and /tmp/hv_record.avi (APS frames=N)`.
-
-#### `viewer` — live capture with decode counting (auto-selects EVT2 / RAW8)
-
-```bash
-./out/x86_64/build/samples/cpp/viewer/hv_sample_viewer                    # USB (EVT2 decoding)
-./out/x86_64/build/samples/cpp/viewer/hv_sample_viewer --mipi             # MIPI (MipiRaw8 decoding)
-./out/x86_64/build/samples/cpp/viewer/hv_sample_viewer --mipi-hvs         # MIPI dual-VC
-```
-
-Output: `viewer: decoded N events`.
-
-#### `bench_hw` — real-hardware USB benchmark (Mev/s + APS fps)
-
-```bash
-./out/x86_64/build/samples/cpp/bench_hw/hv_sample_bench_hw               # default 0x1d6b:0x0105, 5 s
-./out/x86_64/build/samples/cpp/bench_hw/hv_sample_bench_hw 0x1d6b 0x0105 10   # explicit VID PID and duration (s)
-```
-
-#### `live_record_display` — MIPI-HVS live preview + key-controlled recording (OpenCV, on S100)
-
-```bash
-./out/s100/build/samples/cpp/live_record_display/hv_sample_live_record_display
-./out/s100/build/samples/cpp/live_record_display/hv_sample_live_record_display --no-display --evs-prefix demo --aps-prefix demo
-```
-
-Options: `--no-display` (headless, console interaction), `--evs-prefix/--aps-prefix <str>`
-(recording file prefixes), `-h` for help.
-Window keys: `r` start/stop recording, `d` toggle display refresh, `q`/ESC quit.
-
-#### `player` — offline playback (EVS .raw + APS .avi, OpenCV)
-
-```bash
+# player — offline playback of recordings (OpenCV)
 ./out/x86_64/build/samples/cpp/player/hv_sample_player events.raw video.avi          # fps=30, speed 1.0
-./out/x86_64/build/samples/cpp/player/hv_sample_player events.raw video.avi 60 2.0   # AVI fallback fps and speed
+./out/x86_64/build/samples/cpp/player/hv_sample_player events.raw video.avi 60 2.0   # explicit fps and speed
 ```
 
-Inputs come from `record` / `live_record_display` recordings.
+#### S100 (MIPI HVS)
+
+Deploy to the board (`out/s100/build` is **self-contained** — the `lib/s100`
+`libshimetapi_*.so` files are bundled into it at build time and sample rpaths
+use `$ORIGIN` relative paths; just copy the whole directory):
+
+```bash
+# host
+scp -r out/s100/build root@<board-IP>:/app/
+# on the board, run directly (no LD_LIBRARY_PATH needed)
+/app/build/samples/cpp/get_started/hv_sample_get_started --mipi-hvs
+```
+
+> The board needs **no** build environment — cross toolchains live on the build host only.
+> OpenCV samples (player / live_record_display) also need `third_party/aarch64_opencv/lib/aarch64-linux-gnu`
+> copied somewhere on the board with `export LD_LIBRARY_PATH` pointing at it.
+
+Run samples:
+
+```bash
+# get_started — MIPI-HVS minimal capture
+/app/build/samples/cpp/get_started/hv_sample_get_started --mipi-hvs
+
+# record — MIPI-HVS mixed recording
+/app/build/samples/cpp/record/hv_sample_record --mipi-hvs
+
+# live_record_display — live preview + key-controlled recording
+/app/build/samples/cpp/live_record_display/hv_sample_live_record_display
+# r start/stop recording, q quit; --no-display headless, --evs-prefix/--aps-prefix set recording prefixes
+
+# player — offline playback
+/app/build/samples/cpp/player/hv_sample_player events.raw aps.avi
+```
 
 ### Python samples
 
 The Python binding (a single `hv_toolkit` module, **prebuilt for x86_64**, requires Python 3.10) ships in `lib/x86_64/python/`:
 
 ```bash
-# Easiest deployment: install the libs into system paths first,
-# then the module imports directly.
+# Easiest: install the libs into system paths first, then import directly
 sudo ./run.sh install x86_64
 python3 samples/python/get_started.py
 
-# Alternative (no install): keep the module next to the libs and add it to sys.path
+# Alternative (no install): add the module to sys.path from the repo root
 python3 -c "import sys; sys.path.insert(0, 'lib/x86_64/python'); import hv_toolkit; print(hv_toolkit.Camera)"
 ```
 
-Minimal USB capture (`frame.evs` holds raw event bytes; decode with `Evt2Decoder`):
+Minimal USB capture — `frame.evs` holds raw event bytes; decode with `Evt2Decoder`:
 
 ```python
 import hv_toolkit as hv
@@ -193,18 +222,14 @@ cfg.backend    = hv.Backend.Usb
 cfg.vendor_id  = 0x1d6b
 cfg.product_id = 0x0105
 
-cam = hv.Camera()
-cam.init(cfg)
-cam.start_stream()
-
+cam = hv.Camera(); cam.init(cfg); cam.start_stream()
 dec = hv.Evt2Decoder()
 f = hv.Frame()
 for _ in range(10):
     if cam.get_frame(f, 1000):
         events = dec.decode(bytes(f.evs))   # → numpy structured array (x, y, t, polarity)
         print(f"frame {f.frame_id} {f.width}x{f.height}: {len(events)} events, aps={f.aps.nbytes} bytes")
-cam.stop_stream()
-cam.destroy()
+cam.stop_stream(); cam.destroy()
 ```
 
 For MIPI HVS, only the backend and decoder change (`Frame.evs` is a RAW8 subframe stream; use `MipiRaw8Decoder`):
@@ -215,27 +240,13 @@ cfg.backend      = hv.Backend.MipiHvs
 cfg.sensor_index = 0       # no VID/PID
 cfg.evs_fps      = 500     # fps tier (0 = default 240; one of 120/240/300/500/750/1000; applied at Init)
 cfg.i2c_bus      = 1
-dec = hv.MipiRaw8Decoder()  # not Evt2Decoder
+dec = hv.MipiRaw8Decoder()
 ```
 
-See the full MIPI sample at [`samples/python/get_started_mipi.py`](samples/python/get_started_mipi.py) (runs on-device; the prebuilt Python module is x86_64-only).
+See the full MIPI sample at [`samples/python/get_started_mipi.py`](samples/python/get_started_mipi.py)
+(runs on-device; the prebuilt Python module is x86_64-only).
 
 > **FPS tiers**: `cfg.evs_fps` (0 = default 240). Tiers map to whole-packet subframe counts — 120fps=16, 240fps=32, 300fps=40, 500fps=64, 750fps=100, 1000fps=128 subframes; `MipiRaw8Decoder.decode` adapts automatically to the data length when `subframe_count` is omitted. The tier is selected at `Init` (switching mid-stream would require rebuilding the pipeline, so `SetFrameRate` is unsupported on MIPI).
-
-**Deploying on S100**: `out/s100/build/` is self-contained (the `lib/s100`
-`libshimetapi_*.so` files are bundled into it at build time, and sample rpaths
-use `$ORIGIN` relative paths) — just copy the whole directory to the board:
-
-```bash
-# host
-scp -r out/s100/build root@<board-IP>:/app/
-# on the board, run directly (no LD_LIBRARY_PATH needed)
-/app/build/samples/cpp/get_started/hv_sample_get_started
-
-# OpenCV samples (player / live_record_display) also need the
-# third_party/aarch64_opencv libs somewhere on the board with LD_LIBRARY_PATH
-# pointing at them (the x86 prebuilt Python module cannot run on aarch64).
-```
 
 > The Python module currently exports `Camera` / `DeviceConfig` / `Frame` (with zero-copy numpy views of `evs`/`aps`) / the `Evt2`, `Evt3`, `MipiRaw8` codecs / `extract_evs_timestamp`. Callbacks, `EventReader/Writer`, and `HybridReader` are not exported yet — use the C++ API (see [API_EN.md](API_EN.md)).
 
@@ -263,11 +274,19 @@ sudo chmod -R 777 /dev/bus/usb/
 # Recommended: the udev rule above (persistent, no sudo)
 ```
 
+### S100 cross-build: file in wrong format
+
+`./run.sh build s100` fails **early** with install guidance when no aarch64 toolchain is present
+(it never reaches the link stage). If you invoke cmake yourself without a toolchain file, the
+host compiler fails at link time with `libshimetapi_hv.so: file in wrong format` — fix:
+`apt install g++-aarch64-linux-gnu` then use `./run.sh build s100`, or pass `-DCMAKE_TOOLCHAIN_FILE`.
+
 ## 📁 Repository layout
 
 ```
 shimetapi_Hybrid_vision_toolkit/
 ├── CMakeLists.txt              # prebuilt integration (IMPORTED targets + samples + install rules)
+├── run.sh                      # one-stop entry (build/install/samples/pydeploy/--list)
 ├── README.md / README_EN.md    # docs (zh/en)
 ├── API.md / API_EN.md          # public API reference (zh/en)
 ├── include/shimetapi/          # public headers
@@ -278,17 +297,12 @@ shimetapi_Hybrid_vision_toolkit/
 ├── lib/                        # prebuilt libraries (closed-source binaries)
 │   ├── x86_64/                 # x86_64: USB + Ethernet backends (python/ holds the binding module)
 │   └── s100/                   # S100 aarch64: MIPI + Ethernet backends
+├── toolchains/                 # cross toolchain file (aarch64-linux-gnu)
+├── third_party/                # aarch64 OpenCV (for cross-building OpenCV samples)
 ├── samples/                    # samples
-│   ├── cpp/                    # C++ samples
-│   │   ├── get_started/        # minimal capture
-│   │   ├── callback/           # dual-callback demo
-│   │   ├── record/             # event recording
-│   │   ├── viewer/             # visualized playback
-│   │   ├── bench_hw/           # real-hardware USB benchmark
-│   │   ├── live_record_display/  # MIPI-HVS live preview + recording
-│   │   └── player/             # offline playback (EVS+APS)
+│   ├── cpp/                    # C++ samples (7)
 │   └── python/                 # Python samples
-└── docs/                       # on-device smoke-test notes
+└── docs/                       # board validation steps and smoke-test notes
 ```
 
 ## 🔍 Sample overview
