@@ -68,8 +68,9 @@ cmake --build out/x86_64/build -j    # builds the 7 sample executables
 Cross-building samples for the S100 board (e.g. from x86_64) — links the aarch64 libs in `lib/s100`:
 
 ```bash
-./run.sh build s100 -DCMAKE_TOOLCHAIN_FILE=<your-aarch64-toolchain.cmake>
-# OpenCV samples (player / live_record_display) need a board-side OpenCV when cross-building; they are skipped automatically if absent
+./run.sh build s100    # needs a system aarch64 cross compiler (apt install g++-aarch64-linux-gnu)
+                        # the toolchain file is injected automatically; override with -DCMAKE_TOOLCHAIN_FILE=...
+# OpenCV samples use the bundled aarch64 OpenCV in third_party/ (skipped automatically if absent)
 ```
 
 Sample executables embed an rpath — run them directly (no `LD_LIBRARY_PATH` needed):
