@@ -61,8 +61,8 @@ cd shimetapi_Hybrid_vision_toolkit
 也可直接用 cmake（等价）：
 
 ```bash
-cmake -B build -S .
-cmake --build build -j          # 编出 7 个示例可执行文件
+cmake -B out/x86_64/build -S .      # 构建目录 out/<arch>/build（与 run.sh 一致）
+cmake --build out/x86_64/build -j    # 编出 7 个示例可执行文件
 ```
 
 交叉编样例（如在 x86_64 上为 S100 板卡编）——链接 `lib/s100` 的 aarch64 库：
@@ -75,7 +75,8 @@ cmake --build build -j          # 编出 7 个示例可执行文件
 示例可执行文件已内嵌 rpath，直接运行即可（无需设置 `LD_LIBRARY_PATH`）：
 
 ```bash
-./build/samples/cpp/get_started/hv_sample_get_started
+./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started
+./out/s100/build/samples/cpp/get_started/hv_sample_get_started    # s100 交叉产物
 ```
 
 在自己的工程中链接（CMake）：
@@ -90,8 +91,8 @@ target_link_libraries(your_app PRIVATE
 安装到系统（头文件 + 当前架构的库）：
 
 ```bash
-cmake --install build            # 默认 /usr/local
-cmake --install build --prefix /your/prefix
+cmake --install out/x86_64/build            # 默认 /usr/local
+cmake --install out/x86_64/build --prefix /your/prefix
 ```
 
 ### 运行示例程序
@@ -99,8 +100,8 @@ cmake --install build --prefix /your/prefix
 #### `get_started` — 最小采集
 
 ```bash
-./build/samples/cpp/get_started/hv_sample_get_started          # USB 默认 0x1d6b:0x0105
-./build/samples/cpp/get_started/hv_sample_get_started 0x1d6b 0x0105   # 指定 VID PID
+./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started          # USB 默认 0x1d6b:0x0105
+./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started 0x1d6b 0x0105   # 指定 VID PID
 ```
 
 程序运行截图
@@ -109,7 +110,7 @@ cmake --install build --prefix /your/prefix
 #### `record` — 事件录制
 
 ```bash
-./build/samples/cpp/record/hv_sample_record events.raw 5
+./out/x86_64/build/samples/cpp/record/hv_sample_record events.raw 5
 ```
 
 程序运行截图
@@ -118,7 +119,7 @@ cmake --install build --prefix /your/prefix
 #### `viewer` — 可视化回放
 
 ```bash
-./build/samples/cpp/viewer/hv_sample_viewer events.raw
+./out/x86_64/build/samples/cpp/viewer/hv_sample_viewer events.raw
 ```
 
 程序运行截图
@@ -139,7 +140,7 @@ cp -a lib/x86_64/python/hv_toolkit.*.so <site-packages>/
 python3 samples/python/get_started.py
 ```
 
-> 最省事的部署：`sudo cmake --install build` 把库装进系统路径后，`hv_toolkit` 模块可直接 `import`。
+> 最省事的部署：`sudo ./run.sh install x86_64` 把库装进系统路径后，`hv_toolkit` 模块可直接 `import`。
 
 USB 最小采集（`frame.evs` 是原始事件字节，用 `Evt2Decoder` 解码）：
 

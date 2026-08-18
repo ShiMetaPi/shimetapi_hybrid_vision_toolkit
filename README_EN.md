@@ -61,8 +61,8 @@ cd shimetapi_Hybrid_vision_toolkit
 Or call cmake directly (equivalent):
 
 ```bash
-cmake -B build -S .
-cmake --build build -j          # builds the 7 sample executables
+cmake -B out/x86_64/build -S .      # build dir out/<arch>/build (same as run.sh)
+cmake --build out/x86_64/build -j    # builds the 7 sample executables
 ```
 
 Cross-building samples for the S100 board (e.g. from x86_64) — links the aarch64 libs in `lib/s100`:
@@ -75,7 +75,8 @@ Cross-building samples for the S100 board (e.g. from x86_64) — links the aarch
 Sample executables embed an rpath — run them directly (no `LD_LIBRARY_PATH` needed):
 
 ```bash
-./build/samples/cpp/get_started/hv_sample_get_started
+./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started
+./out/s100/build/samples/cpp/get_started/hv_sample_get_started    # s100 cross output
 ```
 
 Link from your own project (CMake):
@@ -90,8 +91,8 @@ target_link_libraries(your_app PRIVATE
 Install to the system (headers + libraries for the current architecture):
 
 ```bash
-cmake --install build            # default: /usr/local
-cmake --install build --prefix /your/prefix
+cmake --install out/x86_64/build            # default: /usr/local
+cmake --install out/x86_64/build --prefix /your/prefix
 ```
 
 ### Running the samples
@@ -99,20 +100,20 @@ cmake --install build --prefix /your/prefix
 #### `get_started` — minimal capture
 
 ```bash
-./build/samples/cpp/get_started/hv_sample_get_started          # USB default 0x1d6b:0x0105
-./build/samples/cpp/get_started/hv_sample_get_started 0x1d6b 0x0105   # explicit VID PID
+./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started          # USB default 0x1d6b:0x0105
+./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started 0x1d6b 0x0105   # explicit VID PID
 ```
 
 #### `record` — event recording
 
 ```bash
-./build/samples/cpp/record/hv_sample_record events.raw 5
+./out/x86_64/build/samples/cpp/record/hv_sample_record events.raw 5
 ```
 
 #### `viewer` — visualized playback
 
 ```bash
-./build/samples/cpp/viewer/hv_sample_viewer events.raw
+./out/x86_64/build/samples/cpp/viewer/hv_sample_viewer events.raw
 ```
 
 ### Python samples
@@ -122,7 +123,7 @@ The Python binding (a single `hv_toolkit` module, **prebuilt for x86_64**, requi
 ```bash
 # Easiest deployment: install the libs into system paths first,
 # then the module imports directly.
-sudo cmake --install build
+sudo ./run.sh install x86_64
 python3 samples/python/get_started.py
 
 # Alternative (no install): keep the module next to the libs and add it to sys.path
