@@ -16,8 +16,9 @@
 #
 # arch ∈ {x86_64, s100}；缺省 = 本机架构（aarch64 → s100，其余 → x86_64）
 # 构建目录与源码仓同布局：out/<arch>/build（x86_64 与 s100 互不覆盖）
-# 交叉编样例（如在 x86 上为 s100 编）由 cmake 工具链参数实现：
-#   ./run.sh build s100 -DCMAKE_TOOLCHAIN_FILE=<你的-toolchain.cmake>
+# 交叉编 s100 样例：自动使用仓库自带 toolchains/toolchain-aarch64-linux-gnu.cmake
+# （需系统装有 aarch64-linux-gnu-g++，Ubuntu: apt install g++-aarch64-linux-gnu）；
+# 也可用 -DCMAKE_TOOLCHAIN_FILE=<你的-toolchain.cmake> 覆盖。
 
 set -euo pipefail
 
@@ -83,40 +84,41 @@ do_build() {
     echo "Build:     $BUILD_DIR"
     echo
 
-    # 交叉防护：在 x86_64 主机上编 s100 必须有 aarch64 工具链，否则 host 编译器
-    # 编到链接期才因 'file in wrong format' 失败。这里提前拦住并给出出路。
+    # 交叉防护 + 自动工具链：在 x86_64 主机上编 s100 需 aarch64 工具链。
+    # 用户未传 CMAKE_TOOLCHAIN_FILE 时，若系统有 aarch64-linux-gnu-g++ 则自动用
+    # 仓库自带的 toolchains/toolchain-aarch64-linux-gnu.cmake；否则提前报错
+    # （不让 host 编译器编到链接期才 'file in wrong format'）。
+    local cmake_args=()
     if [ "$arch" = "s100" ] && [ "$(uname -m)" != "aarch64" ]; then
-        local has_toolchain=0 has_cc=0 arg
+        local has_toolchain=0 arg
         for arg in "$@"; do
             case "$arg" in
                 -DCMAKE_TOOLCHAIN_FILE=*|--toolchain*) has_toolchain=1 ;;
             esac
         done
-        command -v aarch64-none-linux-gnu-g++ >/dev/null 2>&1 && has_cc=1
-        command -v aarch64-linux-gnu-g++ >/dev/null 2>&1 && has_cc=1
         if [ "$has_toolchain" = "0" ]; then
-            echo "ERROR: cross-building for s100 on $(uname -m) needs an aarch64 toolchain." >&2
-            echo >&2
-            if [ "$has_cc" = "1" ]; then
-                echo "  aarch64 g++ detected in PATH — pass a toolchain file, e.g.:" >&2
-                echo "    ./run.sh build s100 -DCMAKE_TOOLCHAIN_FILE=<your-aarch64-toolchain.cmake>" >&2
-                echo "  (minimal toolchain.cmake: set CMAKE_SYSTEM_NAME=Linux," >&2
-                echo "   CMAKE_SYSTEM_PROCESSOR=aarch64, CMAKE_CXX_COMPILER=aarch64-...-g++)" >&2
+            local bundled="$SCRIPT_DIR/toolchains/toolchain-aarch64-linux-gnu.cmake"
+            if command -v aarch64-linux-gnu-g++ >/dev/null 2>&1 && [ -f "$bundled" ]; then
+                cmake_args+=("-DCMAKE_TOOLCHAIN_FILE=$bundled")
+                echo "Cross toolchain: aarch64-linux-gnu-g++ (auto, $bundled)"
+                echo
             else
-                echo "  1) install an aarch64 cross toolchain (e.g. Arm GNU toolchain), then" >&2
-                echo "  2) ./run.sh build s100 -DCMAKE_TOOLCHAIN_FILE=<your-aarch64-toolchain.cmake>" >&2
+                echo "ERROR: cross-building for s100 on $(uname -m) needs an aarch64 toolchain." >&2
+                echo >&2
+                echo "  1) install one, e.g. Ubuntu/Debian: sudo apt install g++-aarch64-linux-gnu" >&2
+                echo "  2) re-run: ./run.sh build s100" >&2
+                echo "  (or pass your own: -DCMAKE_TOOLCHAIN_FILE=<toolchain.cmake>)" >&2
+                echo >&2
+                echo "  Or build natively on the S100 board: ./run.sh build" >&2
+                return 1
             fi
-            echo >&2
-            echo "  Or build natively on the S100 board: ./run.sh build" >&2
-            return 1
         fi
     fi
 
     # 本机构建（arch 输入为空）：不传 HV_TOOLKIT_ARCH，CMake 按目标架构自行推断。
-    # 交叉（如 x86 上为 s100 编）：显式 arch + 交叉工具链文件，例如
-    #   ./run.sh build s100 -DCMAKE_TOOLCHAIN_FILE=<toolchain.cmake>
+    # 交叉（如 x86 上为 s100 编）：显式 arch + 工具链（自动或用户传入）。
     if [ -n "$arch_input" ]; then
-        cmake -S "$SCRIPT_DIR" -B "$BUILD_DIR" -DHV_TOOLKIT_ARCH="$arch" "$@"
+        cmake -S "$SCRIPT_DIR" -B "$BUILD_DIR" -DHV_TOOLKIT_ARCH="$arch" ${cmake_args[@]+"${cmake_args[@]}"} "$@"
     else
         cmake -S "$SCRIPT_DIR" -B "$BUILD_DIR" "$@"
     fi
