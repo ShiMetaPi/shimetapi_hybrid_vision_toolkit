@@ -98,24 +98,76 @@ cmake --install out/x86_64/build --prefix /your/prefix
 
 ### Running the samples
 
-#### `get_started` — minimal capture
+Build outputs live at `out/<arch>/build/samples/cpp/<name>/hv_sample_<name>` (7 of them).
+Capture samples (get_started / callback / record / viewer) default to the USB
+backend and switch via `--mipi` (MIPI EVS-only) / `--mipi-hvs` (MIPI dual-VC,
+on the S100 board); in USB mode the first two positional args set VID/PID
+(default `0x1d6b 0x0105`). Paths below use x86_64; on S100 use `out/s100/build`.
+
+#### `get_started` — minimal capture (Init → StartStream → GetFrame ×10)
 
 ```bash
-./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started          # USB default 0x1d6b:0x0105
-./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started 0x1d6b 0x0105   # explicit VID PID
+./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started                 # USB, default VID/PID 0x1d6b:0x0105
+./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started 0x1d6b 0x0105   # USB, explicit VID PID
+./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started --mipi          # MIPI backend (sensor_index=9)
 ```
 
-#### `record` — event recording
+Output: `get_started: frame N evs=xxx bytes` per frame.
+
+#### `callback` — dual-callback demo (event + APS async callbacks)
 
 ```bash
-./out/x86_64/build/samples/cpp/record/hv_sample_record events.raw 5
+./out/x86_64/build/samples/cpp/callback/hv_sample_callback                        # USB, 2 seconds
+./out/x86_64/build/samples/cpp/callback/hv_sample_callback --mipi-hvs             # MIPI dual-VC (on S100)
 ```
 
-#### `viewer` — visualized playback
+Output: `callback: events=N images=M` (the legacy `--mipi` backend has no APS; images stays 0).
+
+#### `record` — EVS + APS mixed recording (writes /tmp/hv_record.raw + .avi)
 
 ```bash
-./out/x86_64/build/samples/cpp/viewer/hv_sample_viewer events.raw
+./out/x86_64/build/samples/cpp/record/hv_sample_record                    # USB, 10 frames
+./out/x86_64/build/samples/cpp/record/hv_sample_record --mipi-hvs         # MIPI dual-VC recording
 ```
+
+Output: `record: wrote /tmp/hv_record.raw and /tmp/hv_record.avi (APS frames=N)`.
+
+#### `viewer` — live capture with decode counting (auto-selects EVT2 / RAW8)
+
+```bash
+./out/x86_64/build/samples/cpp/viewer/hv_sample_viewer                    # USB (EVT2 decoding)
+./out/x86_64/build/samples/cpp/viewer/hv_sample_viewer --mipi             # MIPI (MipiRaw8 decoding)
+./out/x86_64/build/samples/cpp/viewer/hv_sample_viewer --mipi-hvs         # MIPI dual-VC
+```
+
+Output: `viewer: decoded N events`.
+
+#### `bench_hw` — real-hardware USB benchmark (Mev/s + APS fps)
+
+```bash
+./out/x86_64/build/samples/cpp/bench_hw/hv_sample_bench_hw               # default 0x1d6b:0x0105, 5 s
+./out/x86_64/build/samples/cpp/bench_hw/hv_sample_bench_hw 0x1d6b 0x0105 10   # explicit VID PID and duration (s)
+```
+
+#### `live_record_display` — MIPI-HVS live preview + key-controlled recording (OpenCV, on S100)
+
+```bash
+./out/s100/build/samples/cpp/live_record_display/hv_sample_live_record_display
+./out/s100/build/samples/cpp/live_record_display/hv_sample_live_record_display --no-display --evs-prefix demo --aps-prefix demo
+```
+
+Options: `--no-display` (headless, console interaction), `--evs-prefix/--aps-prefix <str>`
+(recording file prefixes), `-h` for help.
+Window keys: `r` start/stop recording, `d` toggle display refresh, `q`/ESC quit.
+
+#### `player` — offline playback (EVS .raw + APS .avi, OpenCV)
+
+```bash
+./out/x86_64/build/samples/cpp/player/hv_sample_player events.raw video.avi          # fps=30, speed 1.0
+./out/x86_64/build/samples/cpp/player/hv_sample_player events.raw video.avi 60 2.0   # AVI fallback fps and speed
+```
+
+Inputs come from `record` / `live_record_display` recordings.
 
 ### Python samples
 
@@ -241,33 +293,25 @@ shimetapi_Hybrid_vision_toolkit/
 
 ## 🔍 Sample overview
 
-### get_started
+| Sample | Purpose | Backends | Command |
+|---|---|---|---|
+| `get_started` | Minimal capture (sync GetFrame) | USB / `--mipi` | `hv_sample_get_started [vid pid] [--mipi]` |
+| `callback` | Event + APS async callbacks | USB / `--mipi` / `--mipi-hvs` | `hv_sample_callback [--mipi-hvs]` |
+| `record` | EVS+APS recording to /tmp | USB / `--mipi` / `--mipi-hvs` | `hv_sample_record [--mipi-hvs]` |
+| `viewer` | Live capture + decode counting | USB / `--mipi` / `--mipi-hvs` | `hv_sample_viewer [--mipi]` |
+| `bench_hw` | USB throughput benchmark | USB | `hv_sample_bench_hw [vid pid duration_s]` |
+| `live_record_display` | MIPI-HVS live preview + record (OpenCV) | MipiHvs | `hv_sample_live_record_display [--no-display] [--evs-prefix s] [--aps-prefix s]` |
+| `player` | Offline playback of .raw + .avi (OpenCV) | offline | `hv_sample_player <events.raw> <video.avi> [fps] [speed]` |
 
-The introductory sample: initialize the camera, pull frames synchronously, decode events. The best starting point for learning HV Toolkit.
+Notes:
 
-### callback
-
-Dual-callback demo (event + APS async callbacks) showing `SetEventCallback` / `SetImageCallback`.
-
-### record
-
-Writes the camera event stream to a RAW file, with both `writeRaw` (direct) and `writeEvents` (encode-then-write) paths.
-
-### viewer
-
-Event visualizer: reads a RAW file and accumulates display via OpenCV, with pause and playback controls.
-
-### bench_hw
-
-Real-hardware USB benchmark (default `0x1d6b:0x0105`, 5 s), printing Mev/s and APS fps.
-
-### live_record_display
-
-MIPI-HVS live preview + key-controlled recording (`r` toggles). Shows the EVS visualization and the APS image simultaneously; writes EVS raw + APS AVI via `HybridWriter`.
-
-### player
-
-Offline playback of recorded files (`.raw` + `.avi`) via `HybridReader` and `MipiRaw8Decoder`, with GUI controls (play/pause/step/speed/sync).
+- **get_started**: the starter — Init → StartStream → GetFrame ×10, prints per-frame evs bytes.
+- **callback**: `SetEventCallback` / `SetImageCallback` dual async callbacks; prints counts after 2 s.
+- **record**: `HybridWriter` writes 10 frames to `/tmp/hv_record.raw` (EVS) + `/tmp/hv_record.avi` (APS).
+- **viewer**: streams and auto-selects the decoder per backend (USB=EVT2, MIPI=MipiRaw8); prints total decoded events.
+- **bench_hw**: timed USB benchmark (default `0x1d6b:0x0105`, 5 s), prints Mev/s and APS fps.
+- **live_record_display**: MIPI-HVS dual-VC live preview (EVS left / APS right) + `r`-key recording via `HybridWriter`.
+- **player**: `HybridReader` + `MipiRaw8Decoder` playback with GUI controls (play/pause/step/speed/sync).
 
 ## 📄 Copyright
 
