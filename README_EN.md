@@ -145,11 +145,14 @@ For MIPI HVS, only the backend and decoder change (`Frame.evs` is a RAW8 subfram
 cfg = hv.DeviceConfig()
 cfg.backend      = hv.Backend.MipiHvs
 cfg.sensor_index = 0       # no VID/PID
+cfg.evs_fps      = 500     # fps tier (0 = default 240; one of 120/240/300/500/750/1000; applied at Init)
 cfg.i2c_bus      = 1
 dec = hv.MipiRaw8Decoder()  # not Evt2Decoder
 ```
 
 See the full MIPI sample at [`samples/python/get_started_mipi.py`](samples/python/get_started_mipi.py) (runs on-device; the prebuilt Python module is x86_64-only).
+
+> **FPS tiers**: `cfg.evs_fps` (0 = default 240). Tiers map to whole-packet subframe counts — 120fps=16, 240fps=32, 300fps=40, 500fps=64, 750fps=100, 1000fps=128 subframes; `MipiRaw8Decoder.decode` adapts automatically to the data length when `subframe_count` is omitted. The tier is selected at `Init` (switching mid-stream would require rebuilding the pipeline, so `SetFrameRate` is unsupported on MIPI).
 
 **Deploying on S100**: copy `libshimetapi_*.so*` from `lib/s100/` to the board (e.g. `/app/lib`), set the library path, and run the C++ samples:
 

@@ -25,9 +25,11 @@ struct MipiRaw8Layout {
 class MipiRaw8Decoder {
 public:
     MipiRaw8Decoder() = default;
-    /// 解码 data[0..len)；subframe_count 指定子帧数（默认整包 32）。返回解码事件数。
+    /// 解码 data[0..len)。subframe_count<=0 为自动档：按 len/kSubframeBytes 解全部
+    /// 子帧（各帧率档整包子帧数不同：120fps=16 … 1000fps=128）；显式传值只解前 N 个。
+    /// 返回解码事件数。
     size_t Decode(const uint8_t* data, size_t len, std::vector<EventCD>& out,
-                  int subframe_count = MipiRaw8Layout::kTotalSubframes);
+                  int subframe_count = 0);
     void Reset() {}  // 无状态
 };
 

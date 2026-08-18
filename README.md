@@ -157,11 +157,14 @@ MIPI HVS 只换 backend 与解码器（`Frame.evs` 是 RAW8 子帧流，用 `Mip
 cfg = hv.DeviceConfig()
 cfg.backend      = hv.Backend.MipiHvs
 cfg.sensor_index = 0       # 不用 VID/PID
+cfg.evs_fps      = 500     # 帧率档（0=默认 240；可选 120/240/300/500/750/1000，Init 时生效）
 cfg.i2c_bus      = 1
 dec = hv.MipiRaw8Decoder()  # 不是 Evt2Decoder
 ```
 
 完整 MIPI 样例见 [`samples/python/get_started_mipi.py`](samples/python/get_started_mipi.py)。
+
+> **帧率档**：`cfg.evs_fps`（0=默认 240）。档位与 EVS 整包子帧数对应——120fps=16、240fps=32、300fps=40、500fps=64、750fps=100、1000fps=128 子帧；`MipiRaw8Decoder.decode` 不传 `subframe_count` 时自动按数据长度适配，任意档位无需手传。档位在 `Init` 时选定（MIPI 运行中切档需重建管线，不支持 `SetFrameRate`）。
 
 **S100 部署运行**：把 `lib/s100/` 下的 `libshimetapi_*.so*` 拷到板卡（如 `/app/lib`），设库路径后用 C++ 示例：
 

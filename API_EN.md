@@ -128,7 +128,7 @@ struct DeviceConfig {
     enum class QueuePolicy { DropOldest, Block };
     QueuePolicy queue_policy = QueuePolicy::DropOldest;
     int         event_urbs   = 4;             // USB event endpoint in-flight URB count
-    uint16_t    evs_fps      = 0;             // 0 = do not set (use device default); non-0 = sent automatically at Init (use Camera::SetFrameRate at runtime)
+    uint16_t    evs_fps      = 0;             // MIPI: EVS fps tier (0 = default 240; one of 120/240/300/500/750/1000; selects the sensor config at Init; invalid values fail). USB/Ethernet: change fps at runtime via Camera::SetFrameRate
     int         sensor_index = 0;             // MIPI sensor index
     uint8_t     i2c_bus      = 1;             // MIPI secure-chip authentication I2C bus
     uint16_t    listen_port = 8888;           // Ethernet: TCP listen port
@@ -291,9 +291,11 @@ struct MipiRaw8Layout {
 class MipiRaw8Decoder {
 public:
     MipiRaw8Decoder() = default;
-    // Decode data[0..len); subframe_count sets the number of subframes (default whole packet = 32). Returns the number of decoded events.
+    // Decode data[0..len). subframe_count<=0 is auto: decodes all subframes per
+    // len/kSubframeBytes (whole-packet subframe count varies by fps tier:
+    // 120fps=16 ... 1000fps=128); an explicit value decodes only the first N.
     size_t Decode(const uint8_t* data, size_t len, std::vector<EventCD>& out,
-                  int subframe_count = MipiRaw8Layout::kTotalSubframes);
+                  int subframe_count = 0);
     void Reset();  // stateless, no-op
 };
 ```
@@ -399,7 +401,7 @@ A single `hv_toolkit` module (pybind11) exposing **the same API for USB (x86_64)
 | `Camera` | `Shimeta::hv::Camera` | `init` / `start_stream` / `get_frame` / `stop_stream` / `destroy` / `set_exposure` / `set_frame_rate` / `get_frame_rate` / `sync_clock` |
 | `Evt2Decoder` / `Evt2Encoder` | `Shimeta::codec::Evt2*` | `decode(bytes)→ndarray` / `encode(list[EventCD])→bytes` |
 | `Evt3Decoder` / `Evt3Encoder` | `Shimeta::codec::Evt3*` | same |
-| `MipiRaw8Decoder` | `Shimeta::codec::MipiRaw8Decoder` | MIPI HVS only; `decode(bytes, subframe_count=-1)→ndarray` |
+| `MipiRaw8Decoder` | `Shimeta::codec::MipiRaw8Decoder` | MIPI HVS only; `decode(bytes, subframe_count=0)→ndarray` (0 = auto: all subframes per data length) |
 | `MipiRaw8Layout` | `Shimeta::codec::MipiRaw8Layout` | class constants `kSubframeBytes` / `kTotalSubframes` … |
 | `extract_evs_timestamp(bytes)` | `Shimeta::codec::extractEvsTimestamp` | returns `(raw, processed_us, valid)` |
 
