@@ -170,12 +170,19 @@ See the full MIPI sample at [`samples/python/get_started_mipi.py`](samples/pytho
 
 > **FPS tiers**: `cfg.evs_fps` (0 = default 240). Tiers map to whole-packet subframe counts — 120fps=16, 240fps=32, 300fps=40, 500fps=64, 750fps=100, 1000fps=128 subframes; `MipiRaw8Decoder.decode` adapts automatically to the data length when `subframe_count` is omitted. The tier is selected at `Init` (switching mid-stream would require rebuilding the pipeline, so `SetFrameRate` is unsupported on MIPI).
 
-**Deploying on S100**: copy `libshimetapi_*.so*` from `lib/s100/` to the board (e.g. `/app/lib`), set the library path, and run the C++ samples:
+**Deploying on S100**: `out/s100/build/` is self-contained (the `lib/s100`
+`libshimetapi_*.so` files are bundled into it at build time, and sample rpaths
+use `$ORIGIN` relative paths) — just copy the whole directory to the board:
 
 ```bash
-# on the S100 board
-export LD_LIBRARY_PATH=/app/lib:$LD_LIBRARY_PATH
-./hv_sample_get_started
+# host
+scp -r out/s100/build root@<board-IP>:/app/
+# on the board, run directly (no LD_LIBRARY_PATH needed)
+/app/build/samples/cpp/get_started/hv_sample_get_started
+
+# OpenCV samples (player / live_record_display) also need the
+# third_party/aarch64_opencv libs somewhere on the board with LD_LIBRARY_PATH
+# pointing at them (the x86 prebuilt Python module cannot run on aarch64).
 ```
 
 > The Python module currently exports `Camera` / `DeviceConfig` / `Frame` (with zero-copy numpy views of `evs`/`aps`) / the `Evt2`, `Evt3`, `MipiRaw8` codecs / `extract_evs_timestamp`. Callbacks, `EventReader/Writer`, and `HybridReader` are not exported yet — use the C++ API (see [API_EN.md](API_EN.md)).
