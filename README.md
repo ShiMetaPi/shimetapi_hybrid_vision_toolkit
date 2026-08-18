@@ -54,8 +54,22 @@ sudo apt-get install build-essential cmake libusb-1.0-0 libopencv-dev
 
 ```bash
 cd shimetapi_Hybrid_vision_toolkit
+./run.sh build                  # = cmake 配置 + 编译（默认本机架构）
+./run.sh --list                 # 查看预编译架构与就绪状态
+```
+
+也可直接用 cmake（等价）：
+
+```bash
 cmake -B build -S .
 cmake --build build -j          # 编出 7 个示例可执行文件
+```
+
+交叉编样例（如在 x86_64 上为 S100 板卡编）——链接 `lib/s100` 的 aarch64 库：
+
+```bash
+./run.sh build s100 -DCMAKE_TOOLCHAIN_FILE=<你的-aarch64-toolchain.cmake>
+# OpenCV 类样例（player / live_record_display）交叉时需板端 OpenCV，缺省自动跳过
 ```
 
 示例可执行文件已内嵌 rpath，直接运行即可（无需设置 `LD_LIBRARY_PATH`）：
