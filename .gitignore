@@ -1,0 +1,19 @@
+# Build directories
+build/
+_build/
+out/
+
+# Compiled objects
+*.o
+*.obj
+*.a
+
+# IDE
+.vscode/
+.idea/
+*.swp
+compile_commands.json
+
+# System
+.DS_Store
+Thumbs.db
