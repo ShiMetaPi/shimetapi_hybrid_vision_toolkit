@@ -15,14 +15,20 @@
 #   ./run.sh help
 #
 # arch ∈ {x86_64, s100}；缺省 = 本机架构（aarch64 → s100，其余 → x86_64）
+# 构建目录与源码仓同布局：out/<arch>/build（x86_64 与 s100 互不覆盖）
 # 交叉编样例（如在 x86 上为 s100 编）由 cmake 工具链参数实现：
 #   ./run.sh build s100 -DCMAKE_TOOLCHAIN_FILE=<你的-toolchain.cmake>
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD_DIR="$SCRIPT_DIR/build"
 SAMPLE_NAMES="get_started callback record viewer bench_hw live_record_display player"
+
+# 平台构建目录（与源码仓 run.sh 同布局：out/<arch>/build）
+build_dir_for() {
+    printf '%s/out/%s/build' "$SCRIPT_DIR" "$1"
+}
+BUILD_DIR=""   # 由各命令按 arch 填充
 
 # ---- 架构解析 ----
 resolve_arch() {
@@ -69,6 +75,7 @@ do_build() {
     local arch="$1"; shift || true
     local arch_input="$1"   # 原始输入（空=本机推断）
     shift || true
+    BUILD_DIR="$(build_dir_for "$arch")"
 
     echo "=== HV Toolkit prebuilt samples ==="
     echo "Arch:      $arch${arch_input:+ ($arch_input)}"
@@ -96,7 +103,7 @@ do_install() {
         echo "       or pass an explicit prefix (e.g. ./run.sh install x86_64 /tmp/hv_install)" >&2
         return 1
     fi
-    cmake --install "$BUILD_DIR" --prefix "$prefix" "$@"
+    cmake --install "$(build_dir_for "$arch")" --prefix "$prefix" "$@"
     echo "Installed headers + $arch libs to $prefix"
 }
 
@@ -126,7 +133,7 @@ do_pydeploy() {
 do_samples_list() {
     local s bin
     for s in $SAMPLE_NAMES; do
-        bin="$BUILD_DIR/samples/cpp/$s/hv_sample_${s}"
+        bin="$(build_dir_for "$1")/samples/cpp/$s/hv_sample_${s}"
         if [ -x "$bin" ]; then
             echo "OK   $bin"
         else
@@ -156,7 +163,7 @@ case "$cmd" in
         do_build "$arch" "$arch_input" "$@"
         if [ "$cmd" = "samples" ]; then
             echo "=== sample binaries ==="
-            do_samples_list
+            do_samples_list "$arch"
         fi
         ;;
 
