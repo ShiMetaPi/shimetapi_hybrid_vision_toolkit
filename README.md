@@ -98,33 +98,84 @@ cmake --install out/x86_64/build --prefix /your/prefix
 
 ### 运行示例程序
 
-#### `get_started` — 最小采集
+构建产物在 `out/<arch>/build/samples/cpp/<name>/hv_sample_<name>`（7 个）。
+采集类样例（get_started / callback / record / viewer）默认 USB 后端，
+支持 `--mipi`（MIPI EVS-only）/ `--mipi-hvs`（MIPI 双 VC，S100 板上用）切换；
+USB 模式可用前两个位置参数指定 VID/PID（默认 `0x1d6b 0x0105`）。
+以下以 x86_64 为例，S100 上把路径换成 `out/s100/build`。
+
+#### `get_started` — 最小采集（Init → StartStream → GetFrame 10 帧）
 
 ```bash
-./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started          # USB 默认 0x1d6b:0x0105
-./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started 0x1d6b 0x0105   # 指定 VID PID
+./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started                 # USB，默认 VID/PID 0x1d6b:0x0105
+./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started 0x1d6b 0x0105   # USB，显式指定 VID PID
+./out/x86_64/build/samples/cpp/get_started/hv_sample_get_started --mipi          # MIPI 后端（sensor_index=9）
 ```
+
+输出：每帧 `get_started: frame N evs=xxx bytes`。
 
 程序运行截图
 ![替代文本](assets/imgs/run02.png)
 
-#### `record` — 事件录制
+#### `callback` — 双回调演示（事件 + APS 异步回调）
 
 ```bash
-./out/x86_64/build/samples/cpp/record/hv_sample_record events.raw 5
+./out/x86_64/build/samples/cpp/callback/hv_sample_callback                        # USB，采集 2 秒
+./out/x86_64/build/samples/cpp/callback/hv_sample_callback --mipi-hvs             # MIPI 双 VC（S100 板上）
 ```
+
+输出：`callback: events=N images=M`（`--mipi` 旧后端 APS 未实现，images 恒 0）。
+
+#### `record` — 事件 + APS 混合录制（写 /tmp/hv_record.raw + .avi）
+
+```bash
+./out/x86_64/build/samples/cpp/record/hv_sample_record                    # USB，录 10 帧
+./out/x86_64/build/samples/cpp/record/hv_sample_record --mipi-hvs         # MIPI 双 VC 录制
+```
+
+输出：`record: wrote /tmp/hv_record.raw and /tmp/hv_record.avi (APS frames=N)`。
 
 程序运行截图
 ![替代文本](assets/imgs/run04.jpg)
 
-#### `viewer` — 可视化回放
+#### `viewer` — 实时采集解码计数（EVT2 / RAW8 自动选解码器）
 
 ```bash
-./out/x86_64/build/samples/cpp/viewer/hv_sample_viewer events.raw
+./out/x86_64/build/samples/cpp/viewer/hv_sample_viewer                    # USB（EVT2 解码）
+./out/x86_64/build/samples/cpp/viewer/hv_sample_viewer --mipi             # MIPI（MipiRaw8 解码）
+./out/x86_64/build/samples/cpp/viewer/hv_sample_viewer --mipi-hvs         # MIPI 双 VC
 ```
+
+输出：`viewer: decoded N events`。
 
 程序运行截图
 ![替代文本](assets/imgs/run05.jpg)
+
+#### `bench_hw` — 实机 USB 性能基准（吞吐 Mev/s + APS fps）
+
+```bash
+./out/x86_64/build/samples/cpp/bench_hw/hv_sample_bench_hw               # 默认 0x1d6b:0x0105，5 秒
+./out/x86_64/build/samples/cpp/bench_hw/hv_sample_bench_hw 0x1d6b 0x0105 10   # 指定 VID PID 与时长（秒）
+```
+
+#### `live_record_display` — MIPI-HVS 实时预览 + 按键录制（需 OpenCV，S100 板上跑）
+
+```bash
+./out/s100/build/samples/cpp/live_record_display/hv_sample_live_record_display
+./out/s100/build/samples/cpp/live_record_display/hv_sample_live_record_display --no-display --evs-prefix demo --aps-prefix demo
+```
+
+参数：`--no-display`（无屏模式，控制台交互）、`--evs-prefix/--aps-prefix <str>`（录制文件前缀）、`-h` 帮助。
+窗口按键：`r` 开始/停止录制、`d` 开关显示刷新、`q`/ESC 退出。
+
+#### `player` — 离线回放（EVS .raw + APS .avi，需 OpenCV）
+
+```bash
+./out/x86_64/build/samples/cpp/player/hv_sample_player events.raw video.avi          # 默认 fps=30，速度 1.0
+./out/x86_64/build/samples/cpp/player/hv_sample_player events.raw video.avi 60 2.0   # 指定 AVI 回退帧率与播放速度
+```
+
+输入文件来自 `record` / `live_record_display` 的录制产物。
 
 ### Python 示例
 
@@ -258,33 +309,25 @@ shimetapi_Hybrid_vision_toolkit/
 
 ## 🔍 示例程序说明
 
-### get_started
+| 样例 | 用途 | 后端 | 命令速查 |
+|---|---|---|---|
+| `get_started` | 最小采集（同步 GetFrame） | USB / `--mipi` | `hv_sample_get_started [vid pid] [--mipi]` |
+| `callback` | 事件 + APS 异步回调 | USB / `--mipi` / `--mipi-hvs` | `hv_sample_callback [--mipi-hvs]` |
+| `record` | EVS+APS 混合录制到 /tmp | USB / `--mipi` / `--mipi-hvs` | `hv_sample_record [--mipi-hvs]` |
+| `viewer` | 实时采集 + 解码计数 | USB / `--mipi` / `--mipi-hvs` | `hv_sample_viewer [--mipi]` |
+| `bench_hw` | USB 实机吞吐基准 | USB | `hv_sample_bench_hw [vid pid duration_s]` |
+| `live_record_display` | MIPI-HVS 实时预览 + 录制（OpenCV） | MipiHvs | `hv_sample_live_record_display [--no-display] [--evs-prefix s] [--aps-prefix s]` |
+| `player` | 离线回放 .raw + .avi（OpenCV） | 离线 | `hv_sample_player <events.raw> <video.avi> [fps] [speed]` |
 
-基础入门示例，展示如何初始化相机、同步拉取帧、解码事件。这是学习 HV Toolkit 的最佳起点。
+详细说明：
 
-### callback
-
-双回调演示（事件 + APS 异步回调），展示 `SetEventCallback` / `SetImageCallback` 的用法。
-
-### record
-
-事件录制示例，把相机事件流写入 RAW 文件，支持 `writeRaw`（直写）和 `writeEvents`（编码后写）两种路径。
-
-### viewer
-
-事件可视化播放器，读取 RAW 文件并用 OpenCV 累加显示，支持暂停、回放。
-
-### bench_hw
-
-实机 USB 性能基准（默认 `0x1d6b:0x0105 5` 秒），打印 Mev/s 与 APS fps。
-
-### live_record_display
-
-MIPI-HVS 实时预览 + 按键录制（`r` 键开关录制）。同时显示 EVS 可视化和 APS 图像，使用 `HybridWriter` 写入 EVS raw + APS AVI。
-
-### player
-
-离线回放录制文件（`.raw` + `.avi`），使用 `HybridReader` 读取、`MipiRaw8Decoder` 解码，带 GUI 按钮（播放/暂停/步进/变速/同步）。
+- **get_started**：基础入门，Init → StartStream → GetFrame 10 帧，打印每帧 evs 字节数。学习 HV Toolkit 的最佳起点。
+- **callback**：`SetEventCallback` / `SetImageCallback` 双异步回调演示，采集 2 秒后打印计数。
+- **record**：`HybridWriter` 把 10 帧写入 `/tmp/hv_record.raw`（EVS）+ `/tmp/hv_record.avi`（APS）。
+- **viewer**：拉流并按后端自动选解码器（USB=EVT2，MIPI=MipiRaw8），打印累计解码事件数。
+- **bench_hw**：USB 实机计时基准（默认 `0x1d6b:0x0105`，5 秒），输出 Mev/s 与 APS fps。
+- **live_record_display**：MIPI-HVS 双 VC 实时预览（左 EVS 可视化 / 右 APS）+ `r` 键录制，`HybridWriter` 落盘。
+- **player**：`HybridReader` + `MipiRaw8Decoder` 回放录制文件，带 GUI 按钮（播放/暂停/步进/变速/同步）。
 
 ## 📄 版权声明
 
