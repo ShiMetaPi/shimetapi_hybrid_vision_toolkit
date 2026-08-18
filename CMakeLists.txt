@@ -74,23 +74,32 @@ endif()
 
 # ---- 构建目录自包含：把预编译库拷进 out/<arch>/build ----
 # 源码仓的构建目录天然含 .so（就地编译产物）；预编译版的库在 lib/<arch>/，
-# 拷一份进构建目录让两边布局一致——整个 build 目录拷上板即可运行
-# （当前目录在库搜索路径内，无需 LD_LIBRARY_PATH）。
+# 拷一份进构建目录让两边布局一致——整个 build 目录拷上板即可运行。
+# 注意保留符号链结构（.so → .so.2 → .so.2.0.0）：cmake -E copy 会解引用成
+# 三个实体文件（体积×3），改用 copy_if_different 实体 + ln -sf 重建链接。
 add_custom_target(bundle_libs
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${HV_TOOLKIT_LIB_DIR}/libshimetapi_core.so"
-            "${HV_TOOLKIT_LIB_DIR}/libshimetapi_core.so.2"
             "${HV_TOOLKIT_LIB_DIR}/libshimetapi_core.so.2.0.0"
-            "${HV_TOOLKIT_LIB_DIR}/libshimetapi_codec.so"
-            "${HV_TOOLKIT_LIB_DIR}/libshimetapi_codec.so.2"
             "${HV_TOOLKIT_LIB_DIR}/libshimetapi_codec.so.2.0.0"
-            "${HV_TOOLKIT_LIB_DIR}/libshimetapi_io.so"
-            "${HV_TOOLKIT_LIB_DIR}/libshimetapi_io.so.2"
             "${HV_TOOLKIT_LIB_DIR}/libshimetapi_io.so.2.0.0"
-            "${HV_TOOLKIT_LIB_DIR}/libshimetapi_hv.so"
-            "${HV_TOOLKIT_LIB_DIR}/libshimetapi_hv.so.2"
             "${HV_TOOLKIT_LIB_DIR}/libshimetapi_hv.so.2.0.0"
             "${CMAKE_CURRENT_BINARY_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E create_symlink
+            libshimetapi_core.so.2.0.0 "${CMAKE_CURRENT_BINARY_DIR}/libshimetapi_core.so.2"
+    COMMAND ${CMAKE_COMMAND} -E create_symlink
+            libshimetapi_core.so.2   "${CMAKE_CURRENT_BINARY_DIR}/libshimetapi_core.so"
+    COMMAND ${CMAKE_COMMAND} -E create_symlink
+            libshimetapi_codec.so.2.0.0 "${CMAKE_CURRENT_BINARY_DIR}/libshimetapi_codec.so.2"
+    COMMAND ${CMAKE_COMMAND} -E create_symlink
+            libshimetapi_codec.so.2   "${CMAKE_CURRENT_BINARY_DIR}/libshimetapi_codec.so"
+    COMMAND ${CMAKE_COMMAND} -E create_symlink
+            libshimetapi_io.so.2.0.0 "${CMAKE_CURRENT_BINARY_DIR}/libshimetapi_io.so.2"
+    COMMAND ${CMAKE_COMMAND} -E create_symlink
+            libshimetapi_io.so.2   "${CMAKE_CURRENT_BINARY_DIR}/libshimetapi_io.so"
+    COMMAND ${CMAKE_COMMAND} -E create_symlink
+            libshimetapi_hv.so.2.0.0 "${CMAKE_CURRENT_BINARY_DIR}/libshimetapi_hv.so.2"
+    COMMAND ${CMAKE_COMMAND} -E create_symlink
+            libshimetapi_hv.so.2   "${CMAKE_CURRENT_BINARY_DIR}/libshimetapi_hv.so"
     COMMENT "Bundling prebuilt libs into build dir (self-contained)"
 )
 # 样例构建后自动捆绑（样例链接的 IMPORTED 库在 lib/，运行时才需要 build/ 里的拷贝）
