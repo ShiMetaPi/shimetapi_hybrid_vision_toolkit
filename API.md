@@ -128,7 +128,7 @@ struct DeviceConfig {
     enum class QueuePolicy { DropOldest, Block };
     QueuePolicy queue_policy = QueuePolicy::DropOldest;
     int         event_urbs   = 4;             // USB 事件端点在途 URB 数
-    uint16_t    evs_fps      = 0;             // 0=不设置（用设备默认）；非 0=Init 时自动下发（运行时改用 Camera::SetFrameRate）
+    uint16_t    evs_fps      = 0;             // MIPI：EVS 帧率档（0=默认 240；可选 120/240/300/500/750/1000，Init 时选传感器配置，非档位值报错）。USB/Ethernet 运行时改帧率用 Camera::SetFrameRate
     int         sensor_index = 0;             // MIPI 传感器索引
     uint8_t     i2c_bus      = 1;             // MIPI 安全芯片认证 I2C 总线
     uint16_t    listen_port = 8888;           // Ethernet: TCP 监听端口
@@ -291,14 +291,15 @@ struct MipiRaw8Layout {
 class MipiRaw8Decoder {
 public:
     MipiRaw8Decoder() = default;
-    // 解码 data[0..len)；subframe_count 指定子帧数（默认整包 32）。返回解码事件数。
+    // 解码 data[0..len)。subframe_count<=0 为自动档：按 len/kSubframeBytes 解全部
+    // 子帧（各帧率档整包子帧数不同：120fps=16 … 1000fps=128）；显式传值只解前 N 个。
     size_t Decode(const uint8_t* data, size_t len, std::vector<EventCD>& out,
-                  int subframe_count = MipiRaw8Layout::kTotalSubframes);
+                  int subframe_count = 0);
     void Reset();  // 无状态，no-op
 };
 ```
 
-> MIPI HVS 后端（`Backend::MipiHvs`）的 `Frame.evs` 为 apx003 RAW8 子帧流，需用 `MipiRaw8Decoder`（而非 `Evt2/Evt3Decoder`）解码。
+> MIPI HVS 后端（`Backend::MipiHvs`）的 `Frame.evs` 为 apx003 RAW8 子帧流，需用 `MipiRaw8Decoder`（而非 `Evt2/Evt3Decoder`）解码。帧率档（`DeviceConfig.evs_fps`）与整包子帧数对应：120fps=16、240fps=32、300fps=40、500fps=64、750fps=100、1000fps=128；`Decode` 自动档按数据长度适配，无需手传。
 
 ```cpp
 // 从 apx003 RAW8 子帧头提取传感器时间戳（45-bit / 200 → 微秒）。
@@ -399,7 +400,7 @@ public:
 | `Camera` | `Shimeta::hv::Camera` | `init` / `start_stream` / `get_frame` / `stop_stream` / `destroy` / `set_exposure` / `set_frame_rate` / `get_frame_rate` / `sync_clock` |
 | `Evt2Decoder` / `Evt2Encoder` | `Shimeta::codec::Evt2*` | `decode(bytes)→ndarray` / `encode(list[EventCD])→bytes` |
 | `Evt3Decoder` / `Evt3Encoder` | `Shimeta::codec::Evt3*` | 同上 |
-| `MipiRaw8Decoder` | `Shimeta::codec::MipiRaw8Decoder` | MIPI HVS 专用；`decode(bytes, subframe_count=-1)→ndarray` |
+| `MipiRaw8Decoder` | `Shimeta::codec::MipiRaw8Decoder` | MIPI HVS 专用；`decode(bytes, subframe_count=0)→ndarray`（0=自动按长度解全部子帧） |
 | `MipiRaw8Layout` | `Shimeta::codec::MipiRaw8Layout` | 类常量 `kSubframeBytes` / `kTotalSubframes` 等 |
 | `extract_evs_timestamp(bytes)` | `Shimeta::codec::extractEvsTimestamp` | 返回 `(raw, processed_us, valid)` |
 

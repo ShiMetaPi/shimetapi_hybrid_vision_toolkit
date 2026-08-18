@@ -20,7 +20,10 @@ struct DeviceConfig {
     enum class QueuePolicy { DropOldest, Block };
     QueuePolicy queue_policy = QueuePolicy::DropOldest;
     int         event_urbs   = 4;                  ///< USB 事件端点在途 URB 数
-    uint16_t    evs_fps      = 0;                  ///< 0=不设置（用设备默认）；非 0=Init 时自动下发
+    uint16_t    evs_fps      = 0;                  ///< MIPI：EVS 帧率档（0=默认 240；可选
+                                                   ///< 120/240/300/500/750/1000，Init 时选传感器
+                                                   ///< 配置，非档位值报错）。USB/Ethernet 运行
+                                                   ///< 时改帧率用 Camera::SetFrameRate。
     int         sensor_index = 0;                   ///< MIPI 传感器索引
     uint8_t     i2c_bus      = 1;                   ///< MIPI 安全芯片认证 I2C 总线
     uint16_t    listen_port = 8888;                 ///< Ethernet: TCP 监听端口（相机协议默认 8888）
