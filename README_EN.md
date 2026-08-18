@@ -54,8 +54,22 @@ The prebuilt libraries ship with the repository; there is nothing to compile for
 
 ```bash
 cd shimetapi_Hybrid_vision_toolkit
+./run.sh build                  # = cmake configure + build (native arch by default)
+./run.sh --list                 # show prebuilt architectures and status
+```
+
+Or call cmake directly (equivalent):
+
+```bash
 cmake -B build -S .
 cmake --build build -j          # builds the 7 sample executables
+```
+
+Cross-building samples for the S100 board (e.g. from x86_64) — links the aarch64 libs in `lib/s100`:
+
+```bash
+./run.sh build s100 -DCMAKE_TOOLCHAIN_FILE=<your-aarch64-toolchain.cmake>
+# OpenCV samples (player / live_record_display) need a board-side OpenCV when cross-building; they are skipped automatically if absent
 ```
 
 Sample executables embed an rpath — run them directly (no `LD_LIBRARY_PATH` needed):
