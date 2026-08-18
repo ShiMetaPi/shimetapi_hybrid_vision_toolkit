@@ -68,8 +68,9 @@ cmake --build out/x86_64/build -j    # 编出 7 个示例可执行文件
 交叉编样例（如在 x86_64 上为 S100 板卡编）——链接 `lib/s100` 的 aarch64 库：
 
 ```bash
-./run.sh build s100 -DCMAKE_TOOLCHAIN_FILE=<你的-aarch64-toolchain.cmake>
-# OpenCV 类样例（player / live_record_display）交叉时需板端 OpenCV，缺省自动跳过
+./run.sh build s100    # 需系统 aarch64 交叉编译器（apt install g++-aarch64-linux-gnu）
+                        # 工具链文件自动注入；也可 -DCMAKE_TOOLCHAIN_FILE=... 覆盖
+# OpenCV 类样例用 third_party/ 自带的 aarch64 OpenCV（无则自动跳过）
 ```
 
 示例可执行文件已内嵌 rpath，直接运行即可（无需设置 `LD_LIBRARY_PATH`）：
