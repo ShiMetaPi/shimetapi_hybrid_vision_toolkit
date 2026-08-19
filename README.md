@@ -5,7 +5,7 @@
 HV Toolkit（ShiMetaPi Hybrid Vision Toolkit）**v2.0** 是面向事件相机（DVS/EVS）的高性能 C++17 SDK，统一采集事件数据流（EVS）与图像数据流（APS），自带零第三方依赖的 EVT2/EVT3 编解码。v2.0 完成核心重写：**USB / MIPI / Ethernet 三后端统一为同一套 `Camera` API**，公有 API 表面不再依赖任何第三方事件 SDK。
 
 > 本仓库为**预编译二进制发布版**（核心以 `.so` 闭源交付，仅公开头文件与示例源码）。
-> `lib/x86_64/` 为 x86_64 Linux 库（USB + Ethernet 后端），`lib/s100/` 为 S100 aarch64 库（MIPI + Ethernet 后端）。
+> `lib/x86_64/` 为 x86_64 Linux 库（USB + Ethernet 后端），`lib/s100/` 与 `lib/x5/` 为 aarch64 库（MIPI + Ethernet 后端）。
 
 ## ✨ v2.0 特性
 
@@ -31,7 +31,7 @@ HV Toolkit（ShiMetaPi Hybrid Vision Toolkit）**v2.0** 是面向事件相机（
 | 依赖 | 用途 | 适用平台 |
 | --- | --- | --- |
 | **libusb-1.0**（`libusb-1.0-0`） | USB 后端运行库 | x86_64 |
-| **aarch64 交叉工具链**（`g++-aarch64-linux-gnu`） | S100 交叉编译示例 | S100（交叉编时） |
+| **aarch64 交叉工具链**（`g++-aarch64-linux-gnu`） | s100/x5 交叉编译示例 | s100、x5（交叉编时） |
 | **OpenCV** | `viewer` / `player` / `live_record_display` 示例（交叉编用仓库自带 `third_party/aarch64_opencv`） | 示例可选 |
 
 > v2.0 **不再依赖**第三方事件 SDK —— 编解码为独立 clean-room 实现。OpenCV 仅在示例可视化中用到，非核心依赖。
@@ -42,7 +42,7 @@ HV Toolkit（ShiMetaPi Hybrid Vision Toolkit）**v2.0** 是面向事件相机（
 
 - **C++ 标准**：C++17 或更高
 - **CMake**：3.16+
-- **操作系统**：Linux —— x86_64（USB + Ethernet 后端）；aarch64/S100（MIPI + Ethernet 后端）
+- **操作系统**：Linux —— x86_64（USB + Ethernet 后端）；aarch64/S100 / X5（MIPI + Ethernet 后端）
 
 ### 构建
 
@@ -115,6 +115,37 @@ file out/s100/build/samples/cpp/get_started/hv_sample_get_started  # 应为 ELF 
 # OpenCV 类样例（player / live_record_display）用 third_party/ 自带 aarch64 OpenCV，7/7 全编
 ```
 
+#### X5（ARM MIPI，交叉编译）
+
+X5 平台预编译库在 `lib/x5/`（aarch64）。前置：
+
+```bash
+# 1) aarch64 交叉工具链（同 S100 步骤，apt 装 g++-aarch64-linux-gnu 或 Arm GNU 11.3）
+sudo apt-get install g++-aarch64-linux-gnu            # Ubuntu/Debian 系统编译器
+
+# 2) X5 SDK 源码树（hobot-spdev/hobot-multimedia/hobot-multimedia-samples/hobot-camera）
+#    默认期望 ../x5_sdk/RDK_X5（相对 toolkit 根目录），也可设 X5_SDK_ROOT 指向其他位置
+git clone <X5_SDK_REPO> /path/to/RDK_X5
+export X5_SDK_ROOT=/path/to/RDK_X5
+```
+
+构建：
+
+```bash
+./run.sh build x5      # aarch64 交叉；工具链与 SDK 已就绪即可
+```
+
+> `./run.sh` 自动探测 `../x5_sdk/RDK_X5`；缺失 X5_SDK_ROOT 时显式导出 `X5_SDK_ROOT=<path>`。
+> 也可用 `-DCMAKE_TOOLCHAIN_FILE=<你的-toolchain.cmake>` 覆盖工具链。
+
+产物布局同 s100：
+
+```bash
+ls out/x5/build/libshimetapi_*.so                                                # 预编译 4 个库已捆绑
+file out/x5/build/samples/cpp/get_started/hv_sample_get_started                  # 应为 ELF aarch64
+# OpenCV 类样例（player / live_record_display）用 third_party/ 自带 aarch64 OpenCV，7/7 全编
+```
+
 在自己的工程中链接（CMake）：
 
 ```cmake
@@ -138,6 +169,7 @@ HVToolkit::shimetapi_hv HVToolkit::shimetapi_codec HVToolkit::shimetapi_io)
 # ARCH    STATUS        PREBUILT LIBS
 # x86_64   ready         .../lib/x86_64
 # s100     ready         .../lib/s100
+# x5       ready         .../lib/x5
 ```
 
 ### 运行示例程序

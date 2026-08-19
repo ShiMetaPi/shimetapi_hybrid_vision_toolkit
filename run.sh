@@ -2,7 +2,7 @@
 #
 # run.sh — HV Toolkit 预编译版一站式入口
 #
-# 本仓库以预编译 .so 交付（lib/x86_64、lib/s100），run.sh 只做三件事：
+# 本仓库以预编译 .so 交付（lib/x86_64、lib/s100、lib/x5），run.sh 只做三件事：
 # 编样例（链接预编译库）、安装（头文件+库到系统）、部署 Python 模块。
 # MIPI 帧率档由 DeviceConfig.evs_fps 运行时选择（无需重编 .so）。
 #
@@ -14,11 +14,13 @@
 #   ./run.sh --list                            列出预编译架构与就绪状态
 #   ./run.sh help
 #
-# arch ∈ {x86_64, s100}；缺省 = 本机架构（aarch64 → s100，其余 → x86_64）
-# 构建目录与源码仓同布局：out/<arch>/build（x86_64 与 s100 互不覆盖）
-# 交叉编 s100 样例：自动使用仓库自带 toolchains/toolchain-aarch64-linux-gnu.cmake
+# arch ∈ {x86_64, s100, x5}；缺省 = 本机架构（aarch64 → s100，其余 → x86_64）
+# 构建目录与源码仓同布局：out/<arch>/build（三个架构互不覆盖）
+# 交叉编 s100/x5 样例：自动使用仓库自带 toolchains/toolchain-aarch64-linux-gnu.cmake
 # （需系统装有 aarch64-linux-gnu-g++，Ubuntu: apt install g++-aarch64-linux-gnu）；
 # 也可用 -DCMAKE_TOOLCHAIN_FILE=<你的-toolchain.cmake> 覆盖。
+# s100：依赖 S100_SYSROOT（指向 evs_device_vendor_sdk sysroot）。
+# x5：依赖 X5_SDK_ROOT（指向 RDK_X5 源码树）；可选 X5_TOOLCHAIN_PREFIX。
 
 set -euo pipefail
 
@@ -41,9 +43,11 @@ resolve_arch() {
             esac
             ;;
         x86_64|x86|amd64) printf 'x86_64' ;;
-        s100|S100|aarch64|arm64) printf 's100' ;;
+        s100|S100)        printf 's100' ;;
+        x5|X5)            printf 'x5' ;;
+        aarch64|arm64)    printf 's100' ;;   # 默认 aarch64 → s100；X5 需显式 -DHV_TOOLKIT_ARCH=x5
         *)
-            echo "ERROR: unknown arch '$1' (try: x86_64|s100)" >&2
+            echo "ERROR: unknown arch '$1' (try: x86_64|s100|x5)" >&2
             return 1
             ;;
     esac
@@ -66,7 +70,7 @@ arch_status() {
 
 do_list() {
     printf 'ARCH    STATUS        PREBUILT LIBS\n'
-    for a in x86_64 s100; do
+    for a in x86_64 s100 x5; do
         printf '%-8s %-13s %s\n' "$a" "$(arch_status "$a")" "$(arch_lib_dir "$a")"
     done
 }
@@ -84,33 +88,44 @@ do_build() {
     echo "Build:     $BUILD_DIR"
     echo
 
-    # 交叉防护 + 自动工具链：在 x86_64 主机上编 s100 需 aarch64 工具链。
+    # 交叉防护 + 自动工具链：在 x86_64 主机上编 s100/x5 需 aarch64 工具链。
     # 用户未传 CMAKE_TOOLCHAIN_FILE 时，若系统有 aarch64-linux-gnu-g++ 则自动用
     # 仓库自带的 toolchains/toolchain-aarch64-linux-gnu.cmake；否则提前报错
     # （不让 host 编译器编到链接期才 'file in wrong format'）。
     local cmake_args=()
-    if [ "$arch" = "s100" ] && [ "$(uname -m)" != "aarch64" ]; then
-        local has_toolchain=0 arg
-        for arg in "$@"; do
-            case "$arg" in
-                -DCMAKE_TOOLCHAIN_FILE=*|--toolchain*) has_toolchain=1 ;;
-            esac
-        done
-        if [ "$has_toolchain" = "0" ]; then
-            local bundled="$SCRIPT_DIR/toolchains/toolchain-aarch64-linux-gnu.cmake"
-            if command -v aarch64-linux-gnu-g++ >/dev/null 2>&1 && [ -f "$bundled" ]; then
-                cmake_args+=("-DCMAKE_TOOLCHAIN_FILE=$bundled")
-                echo "Cross toolchain: aarch64-linux-gnu-g++ (auto, $bundled)"
+    if [ "$arch" = "s100" ] || [ "$arch" = "x5" ]; then
+        # SDK 路径：s100 用 S100_SYSROOT，x5 用 X5_SDK_ROOT
+        if [ "$arch" = "x5" ] && [ -z "${X5_SDK_ROOT:-}" ]; then
+            local x5_default="$SCRIPT_DIR/../x5_sdk/RDK_X5"
+            if [ -d "$x5_default/source/hobot-spdev" ]; then
+                cmake_args+=("-DX5_SDK_ROOT=$x5_default" "-DX5_PLATFORM=ON")
+                echo "X5_SDK_ROOT: $x5_default (auto)"
                 echo
-            else
-                echo "ERROR: cross-building for s100 on $(uname -m) needs an aarch64 toolchain." >&2
-                echo >&2
-                echo "  1) install one, e.g. Ubuntu/Debian: sudo apt install g++-aarch64-linux-gnu" >&2
-                echo "  2) re-run: ./run.sh build s100" >&2
-                echo "  (or pass your own: -DCMAKE_TOOLCHAIN_FILE=<toolchain.cmake>)" >&2
-                echo >&2
-                echo "  Or build natively on the S100 board: ./run.sh build" >&2
-                return 1
+            fi
+        fi
+        if [ "$(uname -m)" != "aarch64" ]; then
+            local has_toolchain=0 arg
+            for arg in "$@"; do
+                case "$arg" in
+                    -DCMAKE_TOOLCHAIN_FILE=*|--toolchain*) has_toolchain=1 ;;
+                esac
+            done
+            if [ "$has_toolchain" = "0" ]; then
+                local bundled="$SCRIPT_DIR/toolchains/toolchain-aarch64-linux-gnu.cmake"
+                if command -v aarch64-linux-gnu-g++ >/dev/null 2>&1 && [ -f "$bundled" ]; then
+                    cmake_args+=("-DCMAKE_TOOLCHAIN_FILE=$bundled")
+                    echo "Cross toolchain: aarch64-linux-gnu-g++ (auto, $bundled)"
+                    echo
+                else
+                    echo "ERROR: cross-building for $arch on $(uname -m) needs an aarch64 toolchain." >&2
+                    echo >&2
+                    echo "  1) install one, e.g. Ubuntu/Debian: sudo apt install g++-aarch64-linux-gnu" >&2
+                    echo "  2) re-run: ./run.sh build $arch" >&2
+                    echo "  (or pass your own: -DCMAKE_TOOLCHAIN_FILE=<toolchain.cmake>)" >&2
+                    echo >&2
+                    echo "  Or build natively on the board: ./run.sh build $arch" >&2
+                    return 1
+                fi
             fi
         fi
     fi

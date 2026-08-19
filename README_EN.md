@@ -5,7 +5,7 @@
 HV Toolkit (ShiMetaPi Hybrid Vision Toolkit) **v2.0** is a high-performance C++17 SDK for event cameras (DVS/EVS). It unifies capture of event streams (EVS) and image streams (APS), and ships self-contained EVT2/EVT3 codecs with zero third-party dependencies. The v2.0 core rewrite unifies **USB / MIPI / Ethernet backends behind a single `Camera` API**; the public API surface no longer depends on any third-party event SDK.
 
 > This repository is the **prebuilt binary release** (the core is shipped as closed-source `.so` files; only headers and sample sources are included).
-> `lib/x86_64/` holds the x86_64 Linux libraries (USB + Ethernet backends); `lib/s100/` holds the S100 aarch64 libraries (MIPI + Ethernet backends).
+> `lib/x86_64/` holds the x86_64 Linux libraries (USB + Ethernet backends); `lib/s100/` and `lib/x5/` hold aarch64 libraries (MIPI + Ethernet backends).
 
 ## ✨ v2.0 Features
 
@@ -31,7 +31,7 @@ HV Toolkit (ShiMetaPi Hybrid Vision Toolkit) **v2.0** is a high-performance C++1
 | Dependency | Purpose | Platform |
 | --- | --- | --- |
 | **libusb-1.0** (`libusb-1.0-0`) | USB backend runtime | x86_64 |
-| **aarch64 cross toolchain** (`g++-aarch64-linux-gnu`) | cross-compiling S100 samples | S100 (cross) |
+| **aarch64 cross toolchain** (`g++-aarch64-linux-gnu`) | cross-compiling s100/x5 samples | s100, x5 (cross) |
 | **OpenCV** | `viewer` / `player` / `live_record_display` samples (cross builds use the bundled `third_party/aarch64_opencv`) | samples, optional |
 
 > v2.0 has **no third-party event SDK dependency** — the codecs are an independent clean-room implementation. OpenCV is only used by sample visualizers, not the core.
@@ -42,7 +42,7 @@ HV Toolkit (ShiMetaPi Hybrid Vision Toolkit) **v2.0** is a high-performance C++1
 
 - **C++ standard**: C++17 or newer
 - **CMake**: 3.16+
-- **OS**: Linux — x86_64 (USB + Ethernet backends); aarch64/S100 (MIPI + Ethernet backends)
+- **OS**: Linux — x86_64 (USB + Ethernet backends); aarch64/S100 / X5 (MIPI + Ethernet backends)
 
 ### Build
 
@@ -102,6 +102,37 @@ file out/s100/build/samples/cpp/get_started/hv_sample_get_started  # should be E
 # OpenCV samples use the bundled third_party/aarch64_opencv — all 7 build
 ```
 
+#### X5 (ARM MIPI, cross-compile)
+
+X5 prebuilt libraries live in `lib/x5/` (aarch64). Prerequisites:
+
+```bash
+# 1) aarch64 cross toolchain (same as S100 — apt: g++-aarch64-linux-gnu or Arm GNU 11.3)
+sudo apt-get install g++-aarch64-linux-gnu
+
+# 2) X5 SDK source tree (hobot-spdev / hobot-multimedia / hobot-multimedia-samples / hobot-camera)
+#    Default lookup: ../x5_sdk/RDK_X5 (relative to toolkit root); set X5_SDK_ROOT to override.
+git clone <X5_SDK_REPO> /path/to/RDK_X5
+export X5_SDK_ROOT=/path/to/RDK_X5
+```
+
+Build:
+
+```bash
+./run.sh build x5      # aarch64 cross; toolchain + SDK ready means it just works
+```
+
+> `./run.sh` auto-detects `../x5_sdk/RDK_X5`; export `X5_SDK_ROOT=<path>` to use a different SDK location.
+> Override the toolchain with `-DCMAKE_TOOLCHAIN_FILE=<your-toolchain.cmake>`.
+
+Output layout matches:
+
+```bash
+ls out/x5/build/libshimetapi_*.so                                                # 4 prebuilt libs bundled
+file out/x5/build/samples/cpp/get_started/hv_sample_get_started                  # should be ELF aarch64
+# OpenCV samples use the bundled third_party/aarch64_opencv — all 7 build
+```
+
 Link from your own project (CMake):
 
 ```cmake
@@ -124,6 +155,7 @@ Install to the system (headers + libraries for the current architecture):
 # ARCH    STATUS        PREBUILT LIBS
 # x86_64   ready         .../lib/x86_64
 # s100     ready         .../lib/s100
+# x5       ready         .../lib/x5
 ```
 
 ### Running the samples
@@ -132,7 +164,7 @@ Build outputs live at `out/<arch>/build/samples/cpp/<name>/hv_sample_<name>` (7 
 Capture samples (get_started / callback / record / viewer) default to the USB
 backend and switch via `--mipi` (MIPI EVS-only) / `--mipi-hvs` (MIPI dual-VC,
 on the S100 board); in USB mode the first two positional args set VID/PID
-(default `0x1d6b 0x0105`). Paths below use x86_64; on S100 use `out/s100/build`.
+(default `0x1d6b 0x0105`). Paths below use x86_64; on S100 use `out/s100/build`, on X5 use `out/x5/build`.
 
 #### x86_64 (USB)
 
