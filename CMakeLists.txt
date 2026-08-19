@@ -8,12 +8,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(GNUInstallDirs)
 
 # ---- 预编译库选择（按目标架构）----
-# x86_64: USB + Ethernet 后端；s100(aarch64): MIPI + Ethernet 后端。
-# HV_TOOLKIT_ARCH 可显式覆盖（如交叉编译时指定 s100）；缺省按 CMAKE_SYSTEM_PROCESSOR 推断。
-set(HV_TOOLKIT_ARCH "" CACHE STRING "Prebuilt arch override: x86_64 or s100")
+# x86_64: USB + Ethernet 后端；s100/x5(aarch64): MIPI + Ethernet 后端。
+# HV_TOOLKIT_ARCH 可显式覆盖（如交叉编译时指定 s100 或 x5）；缺省按 CMAKE_SYSTEM_PROCESSOR 推断。
+# aarch64 默认推断为 s100；X5 用户需显式 -DHV_TOOLKIT_ARCH=x5（避免默认与 S100 冲突）。
+set(HV_TOOLKIT_ARCH "" CACHE STRING "Prebuilt arch override: x86_64, s100, or x5")
 if(HV_TOOLKIT_ARCH)
-    if(NOT HV_TOOLKIT_ARCH MATCHES "^(x86_64|s100)$")
-        message(FATAL_ERROR "Invalid HV_TOOLKIT_ARCH='${HV_TOOLKIT_ARCH}' (expected x86_64 or s100)")
+    if(NOT HV_TOOLKIT_ARCH MATCHES "^(x86_64|s100|x5)$")
+        message(FATAL_ERROR "Invalid HV_TOOLKIT_ARCH='${HV_TOOLKIT_ARCH}' (expected x86_64, s100, or x5)")
     endif()
     set(HV_TOOLKIT_ARCH_DIR "${HV_TOOLKIT_ARCH}")
 elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "x86_64|amd64|AMD64")
@@ -21,7 +22,7 @@ elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "x86_64|amd64|AMD64")
 elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "aarch64|arm64")
     set(HV_TOOLKIT_ARCH_DIR "s100")
 else()
-    message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR} (prebuilt libs: x86_64, s100/aarch64; or set HV_TOOLKIT_ARCH)")
+    message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR} (prebuilt libs: x86_64, s100/aarch64, x5/aarch64; or set HV_TOOLKIT_ARCH)")
 endif()
 
 set(HV_TOOLKIT_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/${HV_TOOLKIT_ARCH_DIR}" CACHE PATH "Prebuilt library directory")
@@ -54,9 +55,9 @@ foreach(_comp core codec io hv)
         INTERFACE_LINK_DIRECTORIES "${HV_TOOLKIT_LIB_DIR}")
 endforeach()
 
-# s100 预编译 hv 依赖 RDK 平台库（libcam/vpf/hbmem 等），仅板端存在。
+# s100/x5 预编译 hv 依赖 RDK 平台库（libcam/vpf/hbmem 等），仅板端存在。
 # 交叉编样例时允许未定义符号（与源码构建版同策略），运行时由板端解析。
-if(HV_TOOLKIT_ARCH_DIR STREQUAL "s100")
+if(HV_TOOLKIT_ARCH_DIR STREQUAL "s100" OR HV_TOOLKIT_ARCH_DIR STREQUAL "x5")
     set_target_properties(shimetapi_hv PROPERTIES
         INTERFACE_LINK_OPTIONS "-Wl,--allow-shlib-undefined")
 endif()
@@ -102,6 +103,7 @@ add_custom_target(bundle_libs
             libshimetapi_hv.so.2   "${CMAKE_CURRENT_BINARY_DIR}/libshimetapi_hv.so"
     COMMENT "Bundling prebuilt libs into build dir (self-contained)"
 )
+# bundle_libs 已覆盖三个架构共用的复制 + 三层符号链（x5 同 s100 的 hvs 依赖）。
 # 样例构建后自动捆绑（样例链接的 IMPORTED 库在 lib/，运行时才需要 build/ 里的拷贝）
 if(BUILD_SAMPLES)
     add_dependencies(bundle_libs
