@@ -1,5 +1,6 @@
 // viewer: 取每帧事件字节并解码、计数。
 // 默认 USB 后端（EVT2）；传 --mipi 切换到 MIPI 后端，用 MipiRaw8Decoder 解 apx003 RAW8。
+// --sensor-index N 覆盖默认 sensor 索引（S100 默认 9；X5 同配置在 49）。
 #include <shimetapi/hv/camera.h>
 #include <shimetapi/hv/device_config.h>
 #include <shimetapi/codec/evt2_codec.h>     // USB 相机发 EVT2
@@ -14,17 +15,20 @@ int main(int argc, char** argv) {
     // 检查是否指定 MIPI / MIPI-HVS 后端
     bool use_mipi = false;
     bool use_mipi_hvs = false;
+    int sensor_index = 9;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--mipi") == 0) use_mipi = true;
         else if (std::strcmp(argv[i], "--mipi-hvs") == 0) use_mipi_hvs = true;
+        else if (std::strcmp(argv[i], "--sensor-index") == 0 && i + 1 < argc)
+            sensor_index = std::atoi(argv[++i]);
     }
     if (use_mipi_hvs) {
         cfg.backend = Shimeta::hv::Backend::MipiHvs;
         std::printf("viewer: using MIPI-HVS backend (APS+EVS)\n");
     } else if (use_mipi) {
         cfg.backend = Shimeta::hv::Backend::Mipi;
-        cfg.sensor_index = 9;
-        std::printf("viewer: using MIPI backend (sensor_index=9)\n");
+        cfg.sensor_index = sensor_index;
+        std::printf("viewer: using MIPI backend (sensor_index=%d)\n", sensor_index);
     } else {
         cfg.backend = Shimeta::hv::Backend::Usb;
         cfg.vendor_id  = (argc > 1) ? uint16_t(strtoul(argv[1], nullptr, 0)) : 0x1d6b;
