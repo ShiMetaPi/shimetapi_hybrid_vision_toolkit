@@ -40,12 +40,21 @@ int main(int argc, char** argv) {
     }
     Shimeta::io::HybridWriter w;
     w.open("/tmp/hv_record.raw", "/tmp/hv_record.avi", 768, 608);
+    // 双 VC 模式下 APS(~30fps)晚于 EVS(~240fps)就绪：先等首张 APS 到达再录，
+    // 否则开头 ~50ms 的事件帧都还没有 APS 分量（X5 上 10 帧窗口全撞在预热期）。
+    bool saw_aps = false;
+    for (int i = 0; i < 100; ++i) {          // 最多 ~1s 等待 APS 预热
+        Shimeta::Frame f;
+        if (!cam.GetFrame(f, 100)) continue;
+        if (f.aps.size > 0) { saw_aps = true; break; }
+    }
     for (int i = 0; i < 10; ++i) {
         Shimeta::Frame f;
         if (!cam.GetFrame(f, 1000)) continue;
         w.writeFrame(f);
     }
     w.close();
+    (void)saw_aps;
     cam.StopStream();
     cam.Destroy();
     if (w.apsFrameCount() > 0) {
