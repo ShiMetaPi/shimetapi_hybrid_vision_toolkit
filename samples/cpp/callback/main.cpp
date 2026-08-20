@@ -16,7 +16,7 @@ int main(int argc, char** argv) {
     // 检查是否指定 MIPI / MIPI-HVS 后端
     bool use_mipi = false;
     bool use_mipi_hvs = false;
-    int sensor_index = 9;
+    int sensor_index = HV_DEFAULT_SENSOR_INDEX;   // 由 CMake 按架构注入（S100=9, X5=49）
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--mipi") == 0) use_mipi = true;
         else if (std::strcmp(argv[i], "--mipi-hvs") == 0) use_mipi_hvs = true;

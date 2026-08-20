@@ -30,6 +30,17 @@ set(HV_TOOLKIT_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 message(STATUS "HV Toolkit prebuilt: arch=${HV_TOOLKIT_ARCH_DIR} libs=${HV_TOOLKIT_LIB_DIR}")
 
+# MIPI --mipi（EVS-only 单 VC）默认 sensor 索引：两平台 vp_sensor_config_list 不同——
+# S100 共 22 项，apx003cc linear_4096x256_raw8 在索引 9；X5 SDK 共 62 项，同一配置在 49。
+# 样例默认值按目标架构编入；--sensor-index N 可运行时覆盖。
+if(HV_TOOLKIT_ARCH_DIR STREQUAL "x5")
+    set(HV_DEFAULT_SENSOR_INDEX 49)
+else()
+    set(HV_DEFAULT_SENSOR_INDEX 9)
+endif()
+add_compile_definitions(HV_DEFAULT_SENSOR_INDEX=${HV_DEFAULT_SENSOR_INDEX})
+message(STATUS "HV Toolkit MIPI default sensor_index: ${HV_DEFAULT_SENSOR_INDEX}")
+
 # ---- IMPORTED 目标（与源码构建版同名同接口，用户 CMake 无缝切换）----
 foreach(_comp core codec io hv)
     set(_lib "${HV_TOOLKIT_LIB_DIR}/libshimetapi_${_comp}.so")
