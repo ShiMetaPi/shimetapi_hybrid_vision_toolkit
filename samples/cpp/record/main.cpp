@@ -1,8 +1,12 @@
 // record: 把每帧的事件原始字节透传写入 RAW 文件（EventWriter.writeRaw）。
 // 默认 USB 后端；传 --mipi 切换到 MIPI 后端（S100/X5 板上 MIPI 相机）。
 // --sensor-index N 覆盖默认 sensor 索引（S100 默认 9；X5 同配置在 49）。
+// --duration S    录制秒数（默认 3；HVS 下 APS 30fps 可落 ~90 帧）。
+// 双 VC 模式 tsmp chunk 写时间桥配对的 EVS sensor 时间戳（f.aps_evs_ts），
+// 回放端据此做 1 APS ↔ N EVS 对齐（同旧 Demo hv_camera_live_record_timestamps）。
 #include <shimetapi/hv/camera.h>
 #include <shimetapi/hv/device_config.h>
+#include <shimetapi/codec/mipi_raw8_codec.h>
 #include <shimetapi/io/hybrid_writer.h>
 #include <chrono>
 #include <cstdio>
@@ -16,12 +20,16 @@ int main(int argc, char** argv) {
     bool use_mipi = false;
     bool use_mipi_hvs = false;
     int sensor_index = HV_DEFAULT_SENSOR_INDEX;   // 由 CMake 按架构注入（S100=9, X5=49）
+    double duration_s = 3.0;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--mipi") == 0) use_mipi = true;
         else if (std::strcmp(argv[i], "--mipi-hvs") == 0) use_mipi_hvs = true;
         else if (std::strcmp(argv[i], "--sensor-index") == 0 && i + 1 < argc)
             sensor_index = std::atoi(argv[++i]);
+        else if (std::strcmp(argv[i], "--duration") == 0 && i + 1 < argc)
+            duration_s = std::atof(argv[++i]);
     }
+    if (duration_s <= 0) duration_s = 3.0;
     if (use_mipi_hvs) {
         cfg.backend = Shimeta::hv::Backend::MipiHvs;
         std::printf("record: using MIPI-HVS backend (APS+EVS)\n");
@@ -42,30 +50,50 @@ int main(int argc, char** argv) {
     }
     Shimeta::io::HybridWriter w;
     w.open("/tmp/hv_record.raw", "/tmp/hv_record.avi", 768, 608);
-    // 双 VC 模式下 APS(~30fps)晚于 EVS(~240fps)就绪。GetFrame 是电平触发
-    // （事件流开始后每次立即返回），快速循环等不到 APS——必须按墙钟时间
-    // 轮询（live_record_display 同款姿势）：最多 2s 等首张带 APS 的帧。
-    Shimeta::Frame probe;
-    bool have_aps = false;
-    const auto warmup_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (std::chrono::steady_clock::now() < warmup_deadline) {
-        if (cam.GetFrame(probe, 100) && probe.aps.size > 0) { have_aps = true; break; }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    std::printf("record: warmup %s\n", have_aps ? "done (APS streaming)" : "timeout (no APS on this backend)");
-    // 录制：以 30ms 节拍采 10 帧（覆盖 ~300ms，30fps APS 至少落进 8 张）
-    for (int i = 0; i < 10; ++i) {
+
+    // 边沿触发消费：latest_frame_ 只在 dispLoop 弹出新事件包时刷新（HVS 下
+    // 包到达节奏 ~4ms）。GetFrame 是电平触发（谓词只看 evs.size>0），必须按
+    // EVS slab 指针自行去重，否则同一包会被重复落盘。
+    uint64_t evs_frames = 0;
+    const uint8_t* last_evs_ptr = nullptr;
+    uint32_t aps_last_report = 0, tsmp_valid = 0;
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::duration<double>(duration_s);
+    while (std::chrono::steady_clock::now() < deadline) {
         Shimeta::Frame f;
-        if (cam.GetFrame(f, 100)) w.writeFrame(f);
-        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        if (!cam.GetFrame(f, 100)) continue;
+        if (f.evs.size == 0 || f.evs.data == last_evs_ptr) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;                       // 同一事件包的重复快照，不重复落盘
+        }
+        last_evs_ptr = f.evs.data;
+        ++evs_frames;
+        // tsmp 优先用时间桥配对结果（与 APS 帧 vpf 同时刻的 EVS 包）；退化
+        // 路径（无 APS 分量/未配对）用当前包自提取。
+        Shimeta::EvsTimestamp fallback = f.aps_evs_ts;
+        if (!fallback.valid && f.evs.size > 0)
+            fallback = Shimeta::codec::extractEvsTimestamp(f.evs.data, f.evs.size);
+        const bool has_ts = fallback.valid;
+        if (has_ts) ++tsmp_valid;
+        w.writeFrame(f, has_ts ? &fallback : nullptr);
+        if (w.apsFrameCount() > aps_last_report) {
+            aps_last_report = w.apsFrameCount();
+            if (aps_last_report % 30 == 0)
+                std::printf("record: %u APS frames, %llu EVS frames\n",
+                            aps_last_report, (unsigned long long)evs_frames);
+        }
     }
     w.close();
     cam.StopStream();
     cam.Destroy();
     if (w.apsFrameCount() > 0) {
-        std::printf("record: wrote /tmp/hv_record.raw and /tmp/hv_record.avi (APS frames=%u)\n", w.apsFrameCount());
+        std::printf("record: wrote /tmp/hv_record.raw and /tmp/hv_record.avi "
+                    "(APS frames=%u, EVS frames=%llu, ratio 1:%.1f, tsmp=%u)\n",
+                    w.apsFrameCount(), (unsigned long long)evs_frames,
+                    double(evs_frames) / double(w.apsFrameCount()), tsmp_valid);
     } else {
-        std::printf("record: wrote /tmp/hv_record.raw (no APS frames on this backend)\n");
+        std::printf("record: wrote /tmp/hv_record.raw (EVS frames=%llu, no APS on this backend)\n",
+                    (unsigned long long)evs_frames);
     }
     return 0;
 }
