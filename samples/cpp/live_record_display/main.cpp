@@ -75,6 +75,11 @@ int main(int argc, char** argv) {
     auto lastDisplayTime = std::chrono::steady_clock::now();
     const auto displayInterval = std::chrono::milliseconds(1000 / kDefaultDisplayFps);
 
+    // 边沿触发去重：GetFrame 为电平触发（谓词只看 evs.size>0），同一 EVS 包
+    // 会被重复返回；按 slab 指针识别新包，重复快照只刷显示、不重复喂
+    // 可视化/录制（否则事件被重复累积、RAW 重复落盘）。
+    const uint8_t* lastEvsPtr = nullptr;
+
     while (g_running) {
         // 拉一帧
         Shimeta::Frame frame;
@@ -101,10 +106,15 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // 事件 → 解码 + 可视化 + 提取 EVS 传感器时间戳
-        Shimeta::EvsTimestamp evs_ts;
-        if (frame.evs.size > 0) {
-            evs_ts = Shimeta::codec::extractEvsTimestamp(frame.evs.data, frame.evs.size);
+        const bool newEvsPacket = frame.evs.size > 0 && frame.evs.data != lastEvsPtr;
+        if (newEvsPacket) lastEvsPtr = frame.evs.data;
+
+        // 事件 → 解码 + 可视化；tsmp 优先用时间桥配对时间戳（与该 APS 帧
+        // vpf 同时刻的 EVS 包，1 APS ↔ N EVS 对齐），未配对退化当前包自提取。
+        Shimeta::EvsTimestamp evs_ts = frame.aps_evs_ts;
+        if (newEvsPacket) {
+            if (!evs_ts.valid)
+                evs_ts = Shimeta::codec::extractEvsTimestamp(frame.evs.data, frame.evs.size);
             std::vector<Shimeta::EventCD> events;
             decoder.Decode(frame.evs.data, frame.evs.size, events);
             if (!events.empty()) {
@@ -112,8 +122,9 @@ int main(int argc, char** argv) {
             }
         }
 
-        // 录制（写入 RAW + AVI + tsmp chunk）
-        recorder.writeFrame(frame, &evs_ts);
+        // 录制（写入 RAW + AVI + tsmp chunk；重复快照跳过，防 RAW 重复包）
+        if (newEvsPacket)
+            recorder.writeFrame(frame, evs_ts.valid ? &evs_ts : nullptr);
 
         // APS 图像 → BGR 显示
         if (frame.aps.size > 0 && frame.format == Shimeta::PixelFormat::NV12) {
