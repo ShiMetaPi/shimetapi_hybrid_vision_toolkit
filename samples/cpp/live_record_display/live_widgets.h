@@ -67,7 +67,7 @@ private:
 };
 
 /** @brief NV12 packed 字节 → BGR cv::Mat（应用层解码，工具包保持零 OpenCV）。 */
-cv::Mat nv12ToBgr(const uint8_t* data, int width, int height);
+cv::Mat nv12ToBgr(const uint8_t* data, size_t data_size, int width, int height);
 
 /** @brief 打印命令行用法。@param prog 程序名。 */
 void printUsage(const char* prog);

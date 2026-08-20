@@ -101,8 +101,12 @@ void RecordManager::writeFrame(const Shimeta::Frame& f, const Shimeta::EvsTimest
 // ============================================================================
 // NV12 解码 / 用法
 // ============================================================================
-cv::Mat nv12ToBgr(const uint8_t* data, int width, int height) {
-    if (data == nullptr || width <= 0 || height <= 0) return {};
+cv::Mat nv12ToBgr(const uint8_t* data, size_t data_size, int width, int height) {
+    if (data == nullptr || width <= 0 || height <= 0 ||
+        (width & 1) != 0 || (height & 1) != 0) return {};
+    const size_t required = static_cast<size_t>(width) * static_cast<size_t>(height) * 3u / 2u;
+    // The HAL returns packed NV12; reject short buffers before OpenCV can read past them.
+    if (data_size < required) return {};
     cv::Mat y(height, width, CV_8UC1, const_cast<uint8_t*>(data));
     cv::Mat uv(height / 2, width / 2, CV_8UC2, const_cast<uint8_t*>(data + width * height));
     cv::Mat bgr;

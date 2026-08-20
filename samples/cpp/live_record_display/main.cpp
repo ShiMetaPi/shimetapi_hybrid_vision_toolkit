@@ -117,7 +117,14 @@ int main(int argc, char** argv) {
 
         // APS 图像 → BGR 显示
         if (frame.aps.size > 0 && frame.format == Shimeta::PixelFormat::NV12) {
-            apsDisplay = nv12ToBgr(frame.aps.data, frame.width, frame.height);
+            apsDisplay = nv12ToBgr(frame.aps.data, frame.aps.size, frame.width, frame.height);
+        } else if (frame.aps.size > 0 && frame.format == Shimeta::PixelFormat::Gray8 &&
+                   frame.width > 0 && frame.height > 0 &&
+                   frame.aps.size >= static_cast<size_t>(frame.width) * frame.height) {
+            // X5 VIN 直读旁路：RAW10 已在 HAL 降为 Gray8，包一层 BGR 即可显示
+            cv::Mat gray(frame.height, frame.width, CV_8UC1,
+                         const_cast<uint8_t*>(frame.aps.data));
+            cv::cvtColor(gray, apsDisplay, cv::COLOR_GRAY2BGR);
         }
 
         // 显示刷新
