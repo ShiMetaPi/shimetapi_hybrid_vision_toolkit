@@ -109,12 +109,11 @@ int main(int argc, char** argv) {
         const bool newEvsPacket = frame.evs.size > 0 && frame.evs.data != lastEvsPtr;
         if (newEvsPacket) lastEvsPtr = frame.evs.data;
 
-        // 事件 → 解码 + 可视化；tsmp 优先用时间桥配对时间戳（与该 APS 帧
-        // vpf 同时刻的 EVS 包，1 APS ↔ N EVS 对齐），未配对退化当前包自提取。
-        Shimeta::EvsTimestamp evs_ts = frame.aps_evs_ts;
+        // 事件 → 解码 + 可视化。录制侧将当前 EVS 包首帧 timestamp 写入携带
+        // APS 的 AVI tsmp，确保 APS 对应采集到 APS 之后的第一个 EVS 包。
+        Shimeta::EvsTimestamp evs_ts;
         if (newEvsPacket) {
-            if (!evs_ts.valid)
-                evs_ts = Shimeta::codec::extractEvsTimestamp(frame.evs.data, frame.evs.size);
+            evs_ts = Shimeta::codec::extractEvsTimestamp(frame.evs.data, frame.evs.size);
             std::vector<Shimeta::EventCD> events;
             decoder.Decode(frame.evs.data, frame.evs.size, events);
             if (!events.empty()) {

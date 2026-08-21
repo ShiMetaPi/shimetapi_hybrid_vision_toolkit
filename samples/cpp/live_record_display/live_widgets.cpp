@@ -5,7 +5,6 @@
 #include "live_widgets.h"
 
 #include <cstdio>
-#include <cstring>
 #include <ctime>
 #include <iomanip>
 #include <sstream>
@@ -80,6 +79,7 @@ bool RecordManager::start(const std::string& evsPrefix, const std::string& apsPr
         std::fprintf(stderr, "RecordManager: open failed\n");
         return false;
     }
+    seenAps_ = false;
     recording_ = true;
     std::printf("\n开始录制: %s / %s\n", evsPath_.c_str(), apsPath_.c_str());
     return true;
@@ -95,6 +95,14 @@ void RecordManager::stop() {
 
 void RecordManager::writeFrame(const Shimeta::Frame& f, const Shimeta::EvsTimestamp* evs_ts) {
     if (!recording_) return;
+
+    const bool has_aps = f.aps.data != nullptr && f.aps.size > 0 &&
+                         f.format == Shimeta::PixelFormat::NV12;
+    if (!seenAps_) {
+        if (!has_aps) return; // 丢弃本次录制开始前、尚未等到 APS 的 EVS 包。
+        seenAps_ = true;
+    }
+
     writer_.writeFrame(f, evs_ts);
 }
 

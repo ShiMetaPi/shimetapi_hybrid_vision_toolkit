@@ -9,10 +9,12 @@
 #include <shimetapi/codec/mipi_raw8_codec.h>
 #include <shimetapi/io/hybrid_writer.h>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
+
 int main(int argc, char** argv) {
     Shimeta::hv::Camera cam;
     Shimeta::hv::DeviceConfig cfg;
@@ -57,6 +59,7 @@ int main(int argc, char** argv) {
     uint64_t evs_frames = 0;
     const uint8_t* last_evs_ptr = nullptr;
     uint32_t aps_last_report = 0, tsmp_valid = 0;
+    bool seen_aps = !use_mipi_hvs;
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::duration<double>(duration_s);
     while (std::chrono::steady_clock::now() < deadline) {
@@ -67,15 +70,25 @@ int main(int argc, char** argv) {
             continue;                       // 同一事件包的重复快照，不重复落盘
         }
         last_evs_ptr = f.evs.data;
+
+        if (use_mipi_hvs && !seen_aps) {
+            const bool has_aps = f.aps.data != nullptr && f.aps.size > 0 &&
+                                 f.format == Shimeta::PixelFormat::NV12;
+            if (!has_aps) continue;
+            seen_aps = true;
+        }
+
         ++evs_frames;
-        // tsmp 优先用时间桥配对结果（与 APS 帧 vpf 同时刻的 EVS 包）；退化
-        // 路径（无 APS 分量/未配对）用当前包自提取。
-        Shimeta::EvsTimestamp fallback = f.aps_evs_ts;
-        if (!fallback.valid && f.evs.size > 0)
-            fallback = Shimeta::codec::extractEvsTimestamp(f.evs.data, f.evs.size);
-        const bool has_ts = fallback.valid;
+        // HVS: APS 到达后，用当前 EVS 包首帧 timestamp 写入 APS tsmp。
+        // 其他后端维持原有的时间桥优先、当前包 fallback 逻辑。
+        Shimeta::EvsTimestamp evs_ts = use_mipi_hvs
+            ? Shimeta::codec::extractEvsTimestamp(f.evs.data, f.evs.size)
+            : f.aps_evs_ts;
+        if (!evs_ts.valid && f.evs.size > 0)
+            evs_ts = Shimeta::codec::extractEvsTimestamp(f.evs.data, f.evs.size);
+        const bool has_ts = evs_ts.valid;
         if (has_ts) ++tsmp_valid;
-        w.writeFrame(f, has_ts ? &fallback : nullptr);
+        w.writeFrame(f, has_ts ? &evs_ts : nullptr);
         if (w.apsFrameCount() > aps_last_report) {
             aps_last_report = w.apsFrameCount();
             if (aps_last_report % 30 == 0)

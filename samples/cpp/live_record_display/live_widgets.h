@@ -9,7 +9,6 @@
 #ifndef HV_LIVE_WIDGETS_H
 #define HV_LIVE_WIDGETS_H
 
-#include <cstdint>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -57,13 +56,14 @@ public:
     /** @brief 开始录制（生成时间戳文件名 + 打开 HybridWriter）。@param evsPrefix EVS 文件前缀；@param apsPrefix APS 文件前缀。@return 是否成功。 */
     bool start(const std::string& evsPrefix, const std::string& apsPrefix);
     void stop();
-    /** @brief 写一帧（录制中才写）。@param f 帧；@param evs_ts 可选 EVS 传感器时间戳。 */
+    /** @brief 写一帧（录制中才写）。 */
     void writeFrame(const Shimeta::Frame& f, const Shimeta::EvsTimestamp* evs_ts = nullptr);
 private:
     Shimeta::io::HybridWriter writer_;
     std::string evsPath_;
     std::string apsPath_;
     bool recording_ = false;
+    bool seenAps_ = false;
 };
 
 /** @brief NV12 packed 字节 → BGR cv::Mat（应用层解码，工具包保持零 OpenCV）。 */
