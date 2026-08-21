@@ -17,3 +17,6 @@ compile_commands.json
 # System
 .DS_Store
 Thumbs.db
+
+# Release repo: validation manuals live in the source repo, not here
+docs/
