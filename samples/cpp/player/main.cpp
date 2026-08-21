@@ -63,9 +63,23 @@ int main(int argc, char** argv) {
 
     std::string raw_path = argv[1];
     std::string avi_path = argv[2];
-    double fallback_fps = argc >= 4 ? std::atof(argv[3]) : 30.0;
-    double speed = argc >= 5 ? std::atof(argv[4]) : 1.0;
+    bool dump_timestamps = false;
+    double fallback_fps = 30.0, speed = 1.0;
+    int numeric_arg = 0;
+    for (int i = 3; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--dump-timestamps") == 0) {
+            dump_timestamps = true;
+        } else if (numeric_arg++ == 0) {
+            fallback_fps = std::atof(argv[i]);
+        } else if (numeric_arg == 2) {
+            speed = std::atof(argv[i]);
+        } else {
+            printUsage(argv[0]);
+            return 1;
+        }
+    }
     if (fallback_fps <= 0.0 || speed <= 0.0) { printUsage(argv[0]); return 1; }
+    if (dump_timestamps) return dumpTimestamps(raw_path, avi_path, std::cout) ? 0 : 1;
 
     // ---- 加载 EVS ----
     EvsFrameSequence evs_seq;
@@ -102,6 +116,7 @@ int main(int argc, char** argv) {
     EvsStepMode evs_step_mode = EvsStepMode::Aps;
     EvsColorMode evs_color_mode = EvsColorMode::BlueRed;
     bool sync_enabled = false;
+    bool sync_initialized = false;
 
     // ---- 主循环 ----
     while (g_running) {
@@ -201,8 +216,19 @@ int main(int argc, char** argv) {
             aps_timestamp = apsPlaybackTimestampUs(aps_frame_index, video_cache.fps());
             aps_ts_src = "frame/fps";
         }
+        // New recordings embed the paired EVS timestamp in each AVI frame.
+        // Enable sync automatically for those files; files without tsmp retain
+        // the previous independent-playback behavior.
+        if (!sync_initialized) {
+            sync_enabled = aps_ft.valid &&
+                           (aps_ft.processed_timestamp != 0 || aps_ft.raw_timestamp != 0);
+            sync_initialized = true;
+        }
         if (sync_enabled && aps_timestamp != 0)
-            evs_frame_index = evs_seq.frameIndexForTimestamp(aps_timestamp, evs_step_mode);
+            // APS tsmp stores one exact EVS sensor timestamp. Keep the matched
+            // EVS frame for timestamp reporting; accumulated rendering below
+            // still spans one APS interval.
+            evs_frame_index = evs_seq.frameIndexForTimestamp(aps_timestamp, EvsStepMode::Single);
 
         // 合成画面
         cv::Mat evs_render = evs_step_mode == EvsStepMode::Aps

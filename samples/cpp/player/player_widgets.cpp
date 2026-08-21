@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -674,10 +675,56 @@ void printGuiStartupError(const cv::Exception& e) {
 /** @brief 打印命令行用法。 */
 void printUsage(const char* prog) {
     std::cerr << "Usage: " << prog << " <events.raw> <video.avi> [fps] [speed]\n"
+              << "       " << prog << " <events.raw> <video.avi> --dump-timestamps\n"
               << "  events.raw : EVS 录制文件（toolkit EventReader 格式）\n"
               << "  video.avi  : APS AVI 录制文件（含 tsmp chunk）\n"
               << "  fps        : AVI 帧率回退值（默认 30）\n"
-              << "  speed      : 播放速度（默认 1.0）\n";
+              << "  speed      : 播放速度（默认 1.0）\n"
+              << "  --dump-timestamps : CSV 输出所有 EVS RAW8 与 APS tsmp 时间戳后退出\n";
+}
+
+bool dumpTimestamps(const std::string& raw_path, const std::string& avi_path,
+                    std::ostream& out) {
+    out << "stream,packet_index,subframe_index,raw_timestamp,processed_timestamp_us,valid\n";
+
+    Shimeta::io::HybridReader evs_reader;
+    if (!evs_reader.open(raw_path, "")) {
+        std::cerr << "无法打开 EVS RAW: " << raw_path << std::endl;
+        return false;
+    }
+
+    uint64_t evs_packet_index = 0;
+    Shimeta::Frame evs_frame;
+    while (evs_reader.readEvsPacket(evs_frame)) {
+        const size_t subframe_count = evs_frame.evs.size / Shimeta::codec::MipiRaw8Layout::kSubframeBytes;
+        for (size_t sub = 0; sub < subframe_count; ++sub) {
+            const uint8_t* data = evs_frame.evs.data + sub * Shimeta::codec::MipiRaw8Layout::kSubframeBytes;
+            uint64_t first_word = 0;
+            std::memcpy(&first_word, data, sizeof(first_word));
+            if ((uint32_t(first_word) & 0x00FFFFFFu) != Shimeta::codec::MipiRaw8Layout::kHeaderMask)
+                continue;
+
+            const uint64_t raw_timestamp = (first_word >> 24) & 0xFFFFFFFFFFULL;
+            out << "EVS," << evs_packet_index << ',' << sub << ',' << raw_timestamp
+                << ',' << raw_timestamp / 200 << ",1\n";
+        }
+        ++evs_packet_index;
+    }
+
+    Shimeta::io::HybridReader aps_reader;
+    if (!aps_reader.open("", avi_path)) {
+        std::cerr << "无法打开 APS AVI: " << avi_path << std::endl;
+        return false;
+    }
+
+    uint64_t aps_index = 0;
+    Shimeta::Frame aps_frame;
+    Shimeta::EvsTimestamp aps_timestamp;
+    while (aps_reader.readApsFrame(aps_frame, &aps_timestamp)) {
+        out << "APS," << aps_index++ << ",," << aps_timestamp.raw_timestamp << ','
+            << aps_timestamp.processed_timestamp << ',' << (aps_timestamp.valid ? 1 : 0) << '\n';
+    }
+    return true;
 }
 
 /** @brief OpenCV 鼠标回调：左键命中按钮时把其动作写入 g_pending_action。 */

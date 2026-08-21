@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <iosfwd>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -194,6 +195,8 @@ cv::Mat composeSideBySide(const cv::Mat& evs_frame, const cv::Mat& video_frame,
 
 void printGuiStartupError(const cv::Exception& e);   ///< OpenCV 窗口初始化失败时打印诊断
 void printUsage(const char* prog);                   ///< 打印命令行用法
+bool dumpTimestamps(const std::string& raw_path, const std::string& avi_path,
+                    std::ostream& out);             ///< CSV 输出 RAW8/AVI 的全部时间戳
 void mouseCallback(int event, int x, int y, int, void*);  ///< OpenCV 鼠标回调（命中按钮→g_pending_action）
 
 } // namespace hv_player
