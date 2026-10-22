@@ -1,4 +1,4 @@
-# 01 HV Toolkit
+# HV Toolkit
 
 **语言**: **中文** | [English](README_EN.md)
 
@@ -19,12 +19,17 @@ HV Toolkit（ShiMetaPi Hybrid Vision Toolkit）**v2.0** 是面向事件相机（
 
 ## 📋 技术规格
 
-### 事件相机参数
+### 支持设备（事件相机参数）
 
-- **EVS 分辨率**：768×608（子采样：384×304）
-- **APS 分辨率**：768×608
+| 传感器 | EVS 分辨率 | APS 分辨率 | 备注 |
+| --- | --- | --- | --- |
+| **APX003** | 768×608（子采样：384×304） | 768×608（NV12） | |
+| **APX014** | 1280×1024 | 640×1024（NV12） | 事件流 600fps |
+
+- **双传感器自动识别**：USB 后端 `Init` 时按 **APS 首帧传输长度**探测档位（700,424B→APX003；983,048B→APX014），无需任何配置；识别结果打印 `[usb] sensor=APX003` / `[usb] sensor=APX014`，读长与图像尺寸随之自动切换。
 - **数据传输**：USB 3.0（USB 后端）/ MIPI-CSI（MIPI 后端）/ TCP（Ethernet 后端）
 - **事件格式**：EVT2 / EVT3（兼容 Prophesee EventCD 语义）
+
 
 ## 🔧 依赖
 
@@ -68,7 +73,7 @@ cd shimetapi_Hybrid_vision_toolkit
 
 ```bash
 cmake -B out/x86_64/build -S .      # 构建目录 out/<arch>/build（与 run.sh 一致）
-cmake --build out/x86_64/build -j    # 编出 7 个示例可执行文件
+cmake --build out/x86_64/build -j    # 编出最多 9 个示例可执行文件
 ```
 
 验证产物：
@@ -338,6 +343,16 @@ sudo chmod -R 777 /dev/bus/usb/
 `libshimetapi_hv.so: file in wrong format` —— 解决：`apt install g++-aarch64-linux-gnu`
 后用 `./run.sh build s100`，或显式传 `-DCMAKE_TOOLCHAIN_FILE`。
 
+### 设备反复重启 / 反复掉线重连
+
+2026-10 版设备固件调整了 USB vendor 命令语义：**`0x07` 现在是 REBOOT（重启设备）**，不再是"清共享内存"。旧版工具包在初始化时会发送 `0x07`，导致相机不断重启、日志反复出现设备掉线重连。
+
+v2.0 已改用 **`0x0A`（CLEAR_SHM）** 清设备端共享内存（保持推流、不重启），无需任何配置。若仍观察到设备重启，请确认运行的是 v2.0 构建产物，并避免与旧版可执行程序混用。
+
+### USB 2.0 带宽不足
+
+**画面卡顿/时间戳配对紊乱/帧率远低于规格（014 尤其明显）**：相机可能插在了 USB 2.0 口或经仅 2.0 的线材/扩展坞连接——014 满速需 ~158MB/s，USB 2.0 只有 ~35MB/s，流会被截到零头（EVS 600→48fps、APS 60→10fps）。用 `lsusb -t` 确认相机挂在 `5000M` 的总线上（USB 3.0）；显示 `480M` 请换主板后置 USB 3.0 口直连。
+
 ## 📁 项目结构
 
 ```
@@ -353,13 +368,13 @@ shimetapi_Hybrid_vision_toolkit/
 │   └── io/                     # EventReader / EventWriter / HybridWriter / HybridReader
 ├── lib/                        # 预编译库（闭源二进制）
 │   ├── x86_64/                 # x86_64：USB + Ethernet 后端（含 python/ 绑定模块）
-│   └── s100/                   # S100 aarch64：MIPI + Ethernet 后端
+│   ├── s100/                   # S100 aarch64：MIPI + Ethernet 后端
+│   └── x5/                     # X5 aarch64：MIPI + Ethernet 后端
 ├── toolchains/                 # 交叉工具链文件（aarch64-linux-gnu）
 ├── third_party/                # aarch64 OpenCV（交叉编 OpenCV 类示例用）
 ├── samples/                    # 示例
-│   ├── cpp/                    # C++ 示例（7 个）
+│   ├── cpp/                    # C++ 示例（x86_64 最多 9 个）
 │   └── python/                 # Python 示例
-└── docs/                       # 板端验证步骤与冒烟记录
 ```
 
 ## 🔍 示例程序说明
@@ -383,6 +398,16 @@ shimetapi_Hybrid_vision_toolkit/
 - **bench_hw**：USB 实机计时基准（默认 `0x1d6b:0x0105`，5 秒），输出 Mev/s 与 APS fps。
 - **live_record_display**：MIPI-HVS 双 VC 实时预览（左 EVS 可视化 / 右 APS）+ `r` 键录制，`HybridWriter` 落盘。
 - **player**：`HybridReader` + `MipiRaw8Decoder` 回放录制文件，带 GUI 按钮（播放/暂停/步进/变速/同步）。
+
+新增两个示例仅在 x86_64 预编译版启用；`ts_sync` 需要 OpenCV。
+
+### fps_control
+
+运行时帧率控制教学：传感器判别 → 查询当前档 → 切档 → 回读验证 → 事件率对比（3s）。演示 `Camera::SetFrameRate/GetFrameRate` 完整用法（014 档位 240/300/480/600；003 为 120~1000）。切档会触发设备端流水线重启，示例演示了切档后重开相机的正确姿势。
+
+### ts_sync
+
+时间戳同步教学：APS 帧尾时间戳与 EVS 事件时间戳同源同域，示例实时做"相等/最近"配对显示（GUI 双窗 + 残差/校准状态；无显示环境回退纯文本）。014 事件时间为自校准微秒（首 64 帧校准中）。
 
 ## 📄 版权声明
 

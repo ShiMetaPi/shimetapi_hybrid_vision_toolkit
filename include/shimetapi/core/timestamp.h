@@ -5,7 +5,7 @@
 namespace Shimeta {
 struct TimestampInfo {
     int64_t evs_ts_ns  = 0; ///< EVS 事件参考时间戳（纳秒）
-    int64_t aps_ts_ns  = 0; ///< 被复制的 EVS 时间戳（APS 曝光时刻，纳秒）
+    int64_t aps_ts_ns  = 0; ///< APS 尾时间戳（对齐句柄：组帧时设备注入的最新 EVS ts；003=ns、014=原始 tick（非 ns），0=无效）
     bool    ptp_locked = false; ///< Ethernet 后端 PTP 是否锁定
 };
 } // namespace Shimeta

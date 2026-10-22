@@ -17,6 +17,10 @@ public:
     bool open(const std::string& evs_path, const std::string& aps_path,
               uint32_t width, uint32_t height, RawFormat evs_format = RawFormat::Evt3,
               double aps_fps = 30.0);
+    /// 双尺寸版：014 的 EVS 头（1280×1024）与 APS AVI（640×1024）尺寸不同。
+    bool open(const std::string& evs_path, const std::string& aps_path,
+              uint32_t evs_w, uint32_t evs_h, uint32_t aps_w, uint32_t aps_h,
+              RawFormat evs_format = RawFormat::Evt3, double aps_fps = 30.0);
     bool writeFrame(const Shimeta::Frame& frame, const Shimeta::EvsTimestamp* evs_ts = nullptr);
     void close();
     uint32_t apsFrameCount() const { return aps_frames_; }

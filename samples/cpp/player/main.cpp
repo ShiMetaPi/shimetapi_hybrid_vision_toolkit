@@ -100,14 +100,6 @@ int main(int argc, char** argv) {
     std::cout << "Speed: " << speed << "x\n";
     std::cout << "Keys: q/ESC quit, Space pause, a/d step, click buttons\n";
 
-    // ---- GUI 窗口 ----
-    cv::Mat last_video_frame;
-    const std::string win_name = "HV Player (toolkit)";
-    try {
-        cv::namedWindow(win_name, cv::WINDOW_AUTOSIZE);
-        cv::setMouseCallback(win_name, mouseCallback);
-    } catch (const cv::Exception& e) { printGuiStartupError(e); return 1; }
-
     // ---- 播放状态 ----
     auto evs_play_start = std::chrono::steady_clock::now();
     auto aps_play_start = std::chrono::steady_clock::now();
@@ -117,6 +109,63 @@ int main(int argc, char** argv) {
     EvsColorMode evs_color_mode = EvsColorMode::BlueRed;
     bool sync_enabled = false;
     bool sync_initialized = false;
+
+    // ---- 配速映射：帧号均匀推进（对录制内时间戳质量免疫）。
+    // 总时长 T：003 的 EVS 时间戳为真实微秒（可靠）→ T=ts 跨度；014 的离线时间戳
+    // 域不可靠（标定比例失真/间隔不均）→ T=帧数/标称 600fps。两轨进度均按
+    // 帧号占比 × T 线性推进，同起同止；ts 仅用于 SyncOn 对齐与显示。
+    const uint64_t evs_t0 = evs_seq.processedTimestampAt(0);
+    const uint64_t evs_t1 = evs_seq.processedTimestampAt(evs_seq.frameCount() > 0 ? evs_seq.frameCount() - 1 : 0);
+    const uint64_t evs_span = evs_t1 > evs_t0 ? evs_t1 - evs_t0 : 0;
+    const bool is014 = img_size.first == 1280 && img_size.second == 1024;
+    const size_t evs_frames = evs_seq.frameCount();
+    const size_t aps_frames = video_cache.frameCount();
+    // 003：中位帧间隔×帧数（对 ts 大跳变免疫——实测跳变把首尾跨度灌水 4 倍）；
+    // 014：标称 600fps（离线校准域失真，不采信）；均无效时 240fps 口径兜底。
+    const uint64_t median_gap = evs_seq.medianFrameGapUs();
+    uint64_t total_us = 0;
+    if (!is014 && median_gap > 0)
+        total_us = median_gap * uint64_t(evs_frames);
+    else if (is014)
+        total_us = uint64_t(double(evs_frames > 0 ? evs_frames : 1) / 600.0 * 1e6);
+    else
+        total_us = uint64_t(double(evs_frames > 0 ? evs_frames : 1) / double(kEvsFps) * 1e6);
+    const uint64_t aps_span = 0; (void)aps_span;    // 帧号推进，不消费 ts 跨度
+    auto evsIdxFor = [&](int64_t target_us) -> uint64_t {
+        if (target_us < 0) target_us = 0;
+        if (evs_step_mode == EvsStepMode::Aps)
+            return alignEvsFrameToApsBoundary(uint64_t(double(target_us) / double(total_us) * double(evs_frames)));
+        return uint64_t(double(target_us) / double(total_us) * double(evs_frames));
+    };
+    auto evsUsFor = [&](uint64_t fi) -> int64_t {
+        return int64_t(double(fi) / double(evs_frames > 0 ? evs_frames : 1) * double(total_us));
+    };
+    auto apsIdxFor = [&](int64_t target_us) -> uint64_t {
+        if (target_us < 0) target_us = 0;
+        return uint64_t(double(target_us) / double(total_us) * double(aps_frames));
+    };
+    auto apsUsFor = [&](uint64_t fi) -> int64_t {
+        return int64_t(double(fi) / double(aps_frames > 0 ? aps_frames : 1) * double(total_us));
+    };
+    auto resetEvsStart = [&] {
+        evs_play_start = std::chrono::steady_clock::now() -
+            std::chrono::microseconds(int64_t(double(evsUsFor(evs_frame_index)) / speed));
+    };
+    auto resetApsStart = [&] {
+        aps_play_start = std::chrono::steady_clock::now() -
+            std::chrono::microseconds(int64_t(double(apsUsFor(aps_frame_index)) / speed));
+    };
+    std::cout << "Playback timeline: " << double(total_us) / 1e6 << "s ("
+              << (is014 ? "014 nominal" : (median_gap > 0 ? "003 median-gap" : "fps fallback"))
+              << ", frame-index paced)" << std::endl;
+
+    // ---- GUI 窗口 ----
+    cv::Mat last_video_frame;
+    const std::string win_name = "HV Player (toolkit)";
+    try {
+        cv::namedWindow(win_name, cv::WINDOW_AUTOSIZE);
+        cv::setMouseCallback(win_name, mouseCallback);
+    } catch (const cv::Exception& e) { printGuiStartupError(e); return 1; }
 
     // ---- 主循环 ----
     while (g_running) {
@@ -129,29 +178,29 @@ int main(int argc, char** argv) {
                 else evs_playing = !evs_playing;
                 if (evs_playing) {
                     if (isEvsAtEnd(evs_frame_index, evs_seq.frameCount(), evs_step_mode)) evs_frame_index = 0;
-                    evs_play_start = evsStartForFrame(evs_frame_index, speed);
+                    resetEvsStart();
                 }
                 if (sync_enabled && aps_playing) {
                     if (isApsAtKnownEnd(aps_frame_index, video_cache)) aps_frame_index = 0;
-                    aps_play_start = apsStartForFrame(aps_frame_index, speed);
+                    resetApsStart();
                 }
             } else if (action == UiAction::ApsTogglePlay) {
                 if (sync_enabled) { bool np = !(evs_playing || aps_playing); evs_playing = np; aps_playing = np; }
                 else aps_playing = !aps_playing;
                 if (aps_playing) {
                     if (isApsAtKnownEnd(aps_frame_index, video_cache)) aps_frame_index = 0;
-                    aps_play_start = apsStartForFrame(aps_frame_index, speed);
+                    resetApsStart();
                 }
                 if (sync_enabled && evs_playing) {
                     if (isEvsAtEnd(evs_frame_index, evs_seq.frameCount(), evs_step_mode)) evs_frame_index = 0;
-                    evs_play_start = evsStartForFrame(evs_frame_index, speed);
+                    resetEvsStart();
                 }
             } else if (action == UiAction::EvsStepSingle) {
                 evs_step_mode = EvsStepMode::Single;
             } else if (action == UiAction::EvsStepAps) {
                 evs_step_mode = EvsStepMode::Aps;
                 evs_frame_index = alignEvsFrameToApsBoundary(evs_frame_index);
-                if (evs_playing) evs_play_start = evsStartForFrame(evs_frame_index, speed);
+                if (evs_playing) resetEvsStart();
             } else if (action == UiAction::EvsPrev && evs_frame_index > 0) {
                 evs_playing = false;
                 uint64_t step = evs_step_mode == EvsStepMode::Aps ? kEvsPerApsFrame : 1;
@@ -172,18 +221,14 @@ int main(int argc, char** argv) {
             } else if (action == UiAction::SyncOff) sync_enabled = false;
             else {
                 double sp = speedForAction(action);
-                if (sp > 0.0) { speed = sp; evs_play_start = evsStartForFrame(evs_frame_index, speed); aps_play_start = apsStartForFrame(aps_frame_index, speed); }
+                if (sp > 0.0) { speed = sp; resetEvsStart(); resetApsStart(); }
             }
         }
 
-        // 播放进度计算
+        // 播放进度计算（时间戳配速，见上方映射说明）
         if (evs_playing && !sync_enabled) {
             auto wall_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - evs_play_start).count();
-            auto target_us = int64_t(double(wall_us) * speed);
-            if (evs_step_mode == EvsStepMode::Aps)
-                evs_frame_index = alignEvsFrameToApsBoundary(uint64_t(double(target_us) * kEvsFps / 1000000.0));
-            else
-                evs_frame_index = uint64_t(double(target_us) * kEvsFps / 1000000.0);
+            evs_frame_index = evsIdxFor(int64_t(double(wall_us) * speed));
             if (evs_frame_index >= evs_seq.frameCount()) {
                 evs_frame_index = clampEvsFrameIndex(evs_seq.frameCount() - 1, evs_seq.frameCount(), evs_step_mode);
                 evs_playing = false;
@@ -191,7 +236,7 @@ int main(int argc, char** argv) {
         }
         if (aps_playing) {
             auto wall_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - aps_play_start).count();
-            aps_frame_index = uint64_t(double(double(wall_us) * speed) * kApsFps / 1000000.0);
+            aps_frame_index = apsIdxFor(int64_t(double(wall_us) * speed));
         }
 
         // 读取 APS 帧
@@ -252,8 +297,8 @@ int main(int argc, char** argv) {
                 if (evs_step_mode == EvsStepMode::Aps) evs_frame_index = alignEvsFrameToApsBoundary(evs_frame_index);
                 if (isEvsAtEnd(evs_frame_index, evs_seq.frameCount(), evs_step_mode)) evs_frame_index = 0;
                 if (isApsAtKnownEnd(aps_frame_index, video_cache)) aps_frame_index = 0;
-                evs_play_start = evsStartForFrame(evs_frame_index, speed);
-                aps_play_start = apsStartForFrame(aps_frame_index, speed);
+                resetEvsStart();
+                resetApsStart();
             }
         } else if (key == 'a' || key == 'A') {
             evs_playing = false;

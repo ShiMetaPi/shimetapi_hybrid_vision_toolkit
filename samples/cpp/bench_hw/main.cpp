@@ -1,7 +1,7 @@
 // bench_hw: timed real-HW USB bench.
 //   ./hv_sample_bench_hw [vid] [pid] [duration_s]    (default 0x1d6b 0x0105 5)
-// Opens the USB camera (vid:pid), streams for <duration_s> seconds, decodes EVT2
-// events and counts APS frames, then prints Mev/s + APS fps.
+// Opens the USB camera (vid:pid), streams for <duration_s> seconds, decodes raw-subframe
+// events (MipiRaw8Decoder, 003/014 auto) and counts APS frames, then prints Mev/s + APS fps.
 // Needs the camera online + permissions (sudo or the udev rule from the README).
 #include <chrono>
 #include <cstdint>
@@ -10,7 +10,7 @@
 #include <vector>
 
 #include <shimetapi/core/event_cd.h>
-#include <shimetapi/codec/evt2_codec.h>
+#include <shimetapi/codec/mipi_raw8_codec.h>
 #include <shimetapi/hv/camera.h>
 #include <shimetapi/hv/device_config.h>
 
@@ -31,7 +31,6 @@ int main(int argc, char** argv) {
     cfg.backend    = hv::Backend::Usb;
     cfg.vendor_id  = uint16_t(vid);
     cfg.product_id = uint16_t(pid);
-    cfg.event_fmt  = hv::EventFormat::Evt2;   // USB event endpoint pushes EVT2
     if (!cam.Init(cfg)) {
         std::fprintf(stderr, "bench_hw: Init failed (0x%04x:0x%04x not found / no permission).\n", vid, pid);
         return 1;
@@ -44,7 +43,7 @@ int main(int argc, char** argv) {
 
     uint64_t total_ev = 0;
     int frames = 0, aps_frames = 0;
-    codec::Evt2Decoder dec;
+    codec::MipiRaw8Decoder dec;
     std::vector<EventCD> out;
     auto t0 = Clock::now();
     while (true) {

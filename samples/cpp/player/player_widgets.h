@@ -95,6 +95,11 @@ public:
     bool frameAt(uint64_t index, cv::Mat& frame, uint64_t* actual_index = nullptr);
     Shimeta::EvsTimestamp timestampAt(uint64_t index) const;
     size_t cachedFrameCount() const;
+    /// 配速用：缓存首/末帧时间戳键（raw 优先；0 表示无时间戳，调用方回退固定帧率配速）
+    uint64_t firstTimestamp() const;
+    uint64_t lastTimestamp() const;
+    /// 二分定位：时间戳键 ≤ ts 的最大缓存帧索引（配速推进用）
+    size_t frameIndexForTimestamp(uint64_t ts) const;
 private:
     VideoReader                   reader_;
     std::vector<cv::Mat>          frames_;
@@ -114,13 +119,18 @@ public:
     cv::Mat frameAt(size_t index, EvsColorMode mode) const;
     cv::Mat accumulatedFrameAt(size_t index, size_t count, EvsColorMode mode) const;
     uint64_t processedTimestampAt(size_t index) const;
+    /// 相邻帧时间戳差的中位数（open() 时算好）。003=真实µs；用于稳健推算播放总时长
+    /// （对录制内时间戳大跳变免疫——实测出现过 52s 跳变把首尾跨度灌水 4 倍）。
+    uint64_t medianFrameGapUs() const { return median_gap_us_; }
     uint64_t frameIndexForTimestamp(uint64_t timestamp, EvsStepMode mode) const;
     std::pair<uint32_t, uint32_t> imageSize() const;
 private:
+    void computeMedianGap();
     cv::Mat renderPolarityFrame(const cv::Mat& polarity, EvsColorMode mode) const;
     uint32_t width_ = 0, height_ = 0;
     std::vector<cv::Mat>  frames_;                   ///< 每帧极性图（0=空/1=ON/2=OFF）
     std::vector<uint64_t> processed_timestamps_;    ///< 每帧处理时间戳(us)
+    uint64_t median_gap_us_ = 0;                    ///< 相邻帧 ts 差的中位（014 为校准域，仅相对参考）
 };
 
 /**

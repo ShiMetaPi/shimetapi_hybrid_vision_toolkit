@@ -7,7 +7,7 @@
 # MIPI 帧率档由 DeviceConfig.evs_fps 运行时选择（无需重编 .so）。
 #
 # 用法:
-#   ./run.sh build   [arch] [cmake args...]    编译 7 个样例（默认本机架构）
+#   ./run.sh build   [arch] [cmake args...]    编译样例（x86_64 最多 9 个，默认本机架构）
 #   ./run.sh install [arch] [prefix] [args...] 编样例 + 安装头文件与库
 #   ./run.sh samples [arch]                    编样例 + 列出可执行文件
 #   ./run.sh pydeploy                          部署 hv_toolkit 到 site-packages（x86_64）
@@ -25,7 +25,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SAMPLE_NAMES="get_started callback record viewer bench_hw live_record_display player"
+SAMPLE_NAMES="get_started callback record viewer bench_hw live_record_display player fps_control ts_sync"
 
 # 平台构建目录（与源码仓 run.sh 同布局：out/<arch>/build）
 build_dir_for() {

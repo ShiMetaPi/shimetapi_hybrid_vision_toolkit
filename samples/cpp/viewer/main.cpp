@@ -1,10 +1,10 @@
 // viewer: 取每帧事件字节并解码、计数。
-// 默认 USB 后端（EVT2）；传 --mipi 切换到 MIPI 后端，用 MipiRaw8Decoder 解 apx003 RAW8。
+// USB 与 MIPI 后端的 EVS 端点均为 RAW8 子帧流（003 chunk / 014 整帧，长度自动分派），
+// 统一用 MipiRaw8Decoder 解码（与 bench_hw 一致；USB EP2 并非 EVT2）。
 // --sensor-index N 覆盖默认 sensor 索引（S100 默认 9；X5 同配置在 49）。
 #include <shimetapi/hv/camera.h>
 #include <shimetapi/hv/device_config.h>
-#include <shimetapi/codec/evt2_codec.h>     // USB 相机发 EVT2
-#include <shimetapi/codec/mipi_raw8_codec.h> // MIPI s100 (apx003) 发 RAW8
+#include <shimetapi/codec/mipi_raw8_codec.h> // USB EP2 / MIPI s100 均为 RAW8
 #include <vector>
 #include <cstdio>
 #include <cstdlib>
@@ -41,7 +41,14 @@ int main(int argc, char** argv) {
         return 0;
     }
     long total = 0;
-    for (int i = 0; i < 10; ++i) {
+    // USB 路径：解码器提到循环外复用——014 时间戳自校准需跨帧保状态，
+    // 每轮新建会导致校准窗（64 帧）永远填不满、恒交付 0 事件。
+    // --mipi 路径保持每轮新建（003 无状态，沿用原样）。
+    Shimeta::codec::MipiRaw8Decoder usb_dec;
+    // 014 需先攒满 64 帧校准窗才开始交付事件（校准期 Decode 返回 0 事件），
+    // 10 次取帧对 014 恒为 0 事件——扩到 200 帧（600fps 下约 0.33s）覆盖
+    // 校准窗 + 输出段；003 无校准、行为不变（多帧只是多解码）。
+    for (int i = 0; i < 200; ++i) {
         Shimeta::Frame f;
         if (cam.GetFrame(f, 1000) && f.evs.size > 0) {
             std::vector<Shimeta::EventCD> evs;
@@ -49,8 +56,7 @@ int main(int argc, char** argv) {
                 Shimeta::codec::MipiRaw8Decoder dec;
                 dec.Decode(f.evs.data, f.evs.size, evs);
             } else {
-                Shimeta::codec::Evt2Decoder dec;
-                dec.Decode(f.evs.data, f.evs.size, evs);
+                usb_dec.Decode(f.evs.data, f.evs.size, evs);
             }
             total += long(evs.size());
         }

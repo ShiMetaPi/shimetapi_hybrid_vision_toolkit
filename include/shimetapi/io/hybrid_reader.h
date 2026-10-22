@@ -39,7 +39,8 @@ public:
     bool readApsFrame(Shimeta::Frame& out, Shimeta::EvsTimestamp* evs_ts = nullptr);
 
     /// 顺序读下一包 EVS 原始字节（已跳过 EVT3 文本头）。填充 out.evs（自包含 slab）。
-    /// packet_bytes=0 时默认 1 MiB（apx003 RAW8 单包 = 32768×32）。
+    /// packet_bytes=0 时自适应：EVT3 头标 014 几何（1280×1024）→ 164,864B（恰好一帧，
+    /// 014 帧边界被切断会走错解码路径）；其余（003，解码长度无关）→ 1 MiB。
     bool readEvsPacket(Shimeta::Frame& out, size_t packet_bytes = 0);
 
 private:
@@ -59,6 +60,7 @@ private:
     // EVS (raw)
     std::ifstream evs_file_;
     bool evs_open_ = false;
+    size_t evs_packet_bytes_ = 0;   // open() 按 EVT3 头几何自适应；0 = 1 MiB 默认
 };
 
 } // namespace Shimeta::io

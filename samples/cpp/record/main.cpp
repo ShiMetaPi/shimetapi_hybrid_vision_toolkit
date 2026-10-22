@@ -51,11 +51,9 @@ int main(int argc, char** argv) {
         return 0;
     }
     Shimeta::io::HybridWriter w;
-    w.open("/tmp/hv_record.raw", "/tmp/hv_record.avi", 768, 608);
+    bool writer_open = false;
 
-    // 边沿触发消费：latest_frame_ 只在 dispLoop 弹出新事件包时刷新（HVS 下
-    // 包到达节奏 ~4ms）。GetFrame 是电平触发（谓词只看 evs.size>0），必须按
-    // EVS slab 指针自行去重，否则同一包会被重复落盘。
+    // GetFrame 只交付新派发帧；额外按 EVS slab 指针去重，避免重复包落盘。
     uint64_t evs_frames = 0;
     const uint8_t* last_evs_ptr = nullptr;
     uint32_t aps_last_report = 0, tsmp_valid = 0;
@@ -76,6 +74,16 @@ int main(int argc, char** argv) {
                                  f.format == Shimeta::PixelFormat::NV12;
             if (!has_aps) continue;
             seen_aps = true;
+        }
+
+        if (!writer_open) {
+            // 首帧到达后按 EVS chunk 特征选双几何（014：EVS 1280×1024 / APS 640×1024）
+            const bool is014 = Shimeta::codec::isApx014Chunk(f.evs.size);
+            w.open("/tmp/hv_record.raw", "/tmp/hv_record.avi",
+                   is014 ? 1280 : 768, is014 ? 1024 : 608,
+                   f.width > 0 ? unsigned(f.width) : (is014 ? 640u : 768u),
+                   f.height > 0 ? unsigned(f.height) : (is014 ? 1024u : 608u));
+            writer_open = true;
         }
 
         ++evs_frames;

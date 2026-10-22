@@ -88,11 +88,13 @@ EVS sensor-internal timestamp (extracted from the MIPI RAW8 subframe header), us
 
 ```cpp
 struct EvsTimestamp {
-    uint64_t raw_timestamp = 0;         // sensor 45-bit raw timestamp
-    uint64_t processed_timestamp = 0;   // raw_timestamp / 200 (microseconds)
+    uint64_t raw_timestamp = 0;         // sensor raw timestamp (APX003: 45-bit; APX014: u32 tick)
+    uint64_t processed_timestamp = 0;   // microseconds. APX003: raw/200; APX014: always 0
     bool     valid = false;
 };
 ```
+
+> **APX014 branch**: for a 014 chunk (164,864B), `raw_timestamp` is the first-subframe header `u32@+4` (**raw tick, unit unknown**) and `processed_timestamp` is always `0` — the tick→µs conversion is the responsibility of `MipiRaw8Decoder`'s self-calibration (see the Codec section). The 014 timeline is a u32 and wraps every 2³² ticks (~171.8s at a 25MHz tick); consumers must not assume global monotonicity.
 
 ---
 
@@ -108,7 +110,7 @@ enum class EventFormat { Evt2, Evt3 };
 | Backend | Description |
 | --- | --- |
 | `Auto` | Automatic selection (inferred from `DeviceConfig` fields). |
-| `Usb` | libusb backend (USB camera). |
+| `Usb` | libusb backend (USB camera). The sensor (APX003 / APX014) is auto-detected at `Init` from the first APS frame length; read lengths and image sizes switch accordingly. |
 | `Mipi` | MIPI backend (EVS-only). |
 | `MipiHvs` | MIPI HVS dual-VC backend: VC0 carries EVS events, VC1 carries APS frames (→ISP→PYM NV12). |
 | `Ethernet` | Ethernet backend (POSIX sockets). |
@@ -271,9 +273,12 @@ std::vector<Shimeta::EventCD> events;
 dec.Decode(frame.evs.data, frame.evs.size, events);
 ```
 
-### MIPI RAW8 (apx003 subframe stream)
+### MIPI RAW8 (apx003 / apx014 subframe streams, dual-format auto-dispatch)
 
-Header: `<shimetapi/codec/mipi_raw8_codec.h>`. Namespace `Shimeta::codec`. apx003 HVS RAW8 subframe stream decoder (clean-room, no third-party SDK dependency). **Stateless**; no cross-packet reuse needed, `Reset()` is a no-op.
+Header: `<shimetapi/codec/mipi_raw8_codec.h>`. Namespace `Shimeta::codec`. HVS RAW8 subframe stream decoder (clean-room, no third-party SDK dependency). `MipiRaw8Decoder::Decode` dispatches on the **chunk length**: an APX003 chunk is a multiple of 32,768 bytes, an APX014 chunk is always 164,864B (= 1 frame) — the two are unambiguous.
+
+- **APX003 path**: stateless, events carry `t` = ts/200 µs; `Reset()` is a no-op.
+- **APX014 path**: **built-in timestamp self-calibration** — the first 64 frames are buffered while (raw tick, host monotonic clock) pairs are sampled; `tick_hz = median(Δts mod 2³²) × measured fps`; buffered frames are replayed with converted timestamps once calibration completes, then each frame is converted on the fly. On anomaly (median=0 / fps out of [60,2000]) it falls back to the nominal 600fps; after two failed windows it forces delivery (never blocks, never NaN). `Decode` is **not thread-safe** — call it sequentially in stream order.
 
 ```cpp
 struct MipiRaw8Layout {
@@ -323,6 +328,12 @@ public:
     bool isOpen() const;
     RawFormat format() const;
     std::pair<uint32_t, uint32_t> imageSize() const;
+    // Geometry accessors (2026-10): evsWidth/evsHeight from the RAW header
+    // (003=768×608, 014=1280×1024); hasHeaderSize() distinguishes a missing/invalid
+    // header from the internal fallback geometry.
+    bool hasHeaderSize() const;
+    uint32_t evsWidth() const;
+    uint32_t evsHeight() const;
     size_t readAllEvents(std::vector<EventCD>& events);  // read and decode all events
     void reset();
 };
@@ -352,6 +363,12 @@ public:
     bool open(const std::string& evs_path, const std::string& aps_path,
               uint32_t width, uint32_t height, RawFormat evs_format = RawFormat::Evt3,
               double aps_fps = 30.0);
+    // Dual-size overload (2026-10): APX014 recordings need EVS header geometry
+    // (1280×1024) different from the APS AVI geometry (640×1024). The 4-argument
+    // form is preserved and delegates with evs = aps geometry.
+    bool open(const std::string& evs_path, const std::string& aps_path,
+              uint32_t evs_w, uint32_t evs_h, uint32_t aps_w, uint32_t aps_h,
+              RawFormat evs_format = RawFormat::Evt3, double aps_fps = 30.0);
     // Write one frame: EVS goes through writeRaw, APS (NV12) into the AVI; evs_ts optionally injects a tsmp.
     bool writeFrame(const Shimeta::Frame& frame, const Shimeta::EvsTimestamp* evs_ts = nullptr);
     void close();
@@ -380,6 +397,9 @@ public:
     // Read next APS frame sequentially (NV12 raw bytes).
     bool readApsFrame(Shimeta::Frame& out, Shimeta::EvsTimestamp* evs_ts = nullptr);
     // Read next EVS packet sequentially (EVT3 text header already skipped). packet_bytes=0 → default 1 MiB.
+    // packet_bytes=0 is adaptive (2026-10): an EVT3 header declaring 014 geometry
+    // (1280×1024) selects 164,864B per packet (exactly one frame — cutting the frame
+    // boundary would misroute the decoder); otherwise the 1 MiB default applies.
     bool readEvsPacket(Shimeta::Frame& out, size_t packet_bytes = 0);
 };
 ```

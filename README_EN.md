@@ -1,4 +1,4 @@
-# 01 HV Toolkit
+# HV Toolkit
 
 **Language**: [中文](README.md) | **English**
 
@@ -21,10 +21,13 @@ HV Toolkit (ShiMetaPi Hybrid Vision Toolkit) **v2.0** is a high-performance C++1
 
 ### Event camera parameters
 
-- **EVS resolution**: 768×608 (subsampling: 384×304)
-- **APS resolution**: 768×608
-- **Transport**: USB 3.0 (USB backend) / MIPI-CSI (MIPI backend) / TCP (Ethernet backend)
-- **Event formats**: EVT2 / EVT3 (Prophesee EventCD-compatible semantics)
+| Sensor | EVS resolution | APS resolution |
+| --- | --- | --- |
+| APX003 | 768×608 (subsampling: 384×304) | 768×608 (NV12) |
+| APX014 | 1280×1024 | 640×1024 (NV12) |
+
+The x86_64 USB backend detects APX003/APX014 during `Init` from the first APS transfer length (700,424B / 983,048B), then selects the read lengths and image sizes automatically. APX014 events stream at 600fps by default.
+Transport: USB 3.0 / MIPI-CSI / TCP. Event formats: EVT2 / EVT3.
 
 ## 🔧 Dependencies
 
@@ -69,7 +72,7 @@ Or call cmake directly (equivalent):
 
 ```bash
 cmake -B out/x86_64/build -S .      # build dir out/<arch>/build (same as run.sh)
-cmake --build out/x86_64/build -j    # builds the 7 sample executables
+cmake --build out/x86_64/build -j    # builds up to 9 sample executables
 ```
 
 Verify outputs:
@@ -313,6 +316,14 @@ sudo chmod -R 777 /dev/bus/usb/
 host compiler fails at link time with `libshimetapi_hv.so: file in wrong format` — fix:
 `apt install g++-aarch64-linux-gnu` then use `./run.sh build s100`, or pass `-DCMAKE_TOOLCHAIN_FILE`.
 
+### Repeated USB disconnects or reboots
+
+On 2026-10 firmware, USB command `0x07` reboots the device. The updated x86_64 library uses `0x0A` (CLEAR_SHM) during initialization. Use the updated libraries consistently with your executables.
+
+### USB 2.0 bandwidth
+
+**Stuttering playback / disordered timestamp pairing / frame rate far below spec (014 especially)**: the camera may be on a USB 2.0 port or behind a 2.0-only cable/hub — 014 needs ~158MB/s at full rate vs USB 2.0's ~35MB/s, so the stream gets throttled to a fraction (EVS 600→48fps, APS 60→10fps). Verify with `lsusb -t` that the camera sits on a `5000M` (USB 3.0) bus; if it shows `480M`, move it to a rear USB 3.0 port directly on the motherboard.
+
 ## 📁 Repository layout
 
 ```
@@ -328,13 +339,13 @@ shimetapi_Hybrid_vision_toolkit/
 │   └── io/                     # EventReader / EventWriter / HybridWriter / HybridReader
 ├── lib/                        # prebuilt libraries (closed-source binaries)
 │   ├── x86_64/                 # x86_64: USB + Ethernet backends (python/ holds the binding module)
-│   └── s100/                   # S100 aarch64: MIPI + Ethernet backends
+│   ├── s100/                   # S100 aarch64: MIPI + Ethernet backends
+│   └── x5/                     # X5 aarch64: MIPI + Ethernet backends
 ├── toolchains/                 # cross toolchain file (aarch64-linux-gnu)
 ├── third_party/                # aarch64 OpenCV (for cross-building OpenCV samples)
 ├── samples/                    # samples
-│   ├── cpp/                    # C++ samples (7)
+│   ├── cpp/                    # C++ samples (up to 9 on x86_64)
 │   └── python/                 # Python samples
-└── docs/                       # board validation steps and smoke-test notes
 ```
 
 ## 🔍 Sample overview
@@ -358,6 +369,14 @@ Notes:
 - **bench_hw**: timed USB benchmark (default `0x1d6b:0x0105`, 5 s), prints Mev/s and APS fps.
 - **live_record_display**: MIPI-HVS dual-VC live preview (EVS left / APS right) + `r`-key recording via `HybridWriter`.
 - **player**: `HybridReader` + `MipiRaw8Decoder` playback with GUI controls (play/pause/step/speed/sync).
+
+The two new samples are enabled for the x86_64 prebuilt release; `ts_sync` requires OpenCV.
+
+### fps_control
+Runtime frame-rate control teaching sample: identify the sensor → query the current setting → switch to a new setting → verify via readback → compare event rates (3s). Demonstrates the full usage of `Camera::SetFrameRate/GetFrameRate` (APX014 gears: 240/300/480/600; APX003 accepts 120~1000). Switching the frame-rate gear triggers a device-side pipeline restart; the sample demonstrates the correct way to reopen the camera after switching.
+
+### ts_sync
+Timestamp synchronization teaching sample: the APS frame-tail timestamp and EVS event timestamps share the same source and domain. The sample performs live "equal/nearest" pairing display (dual-panel GUI + residual/calibration/monotonicity status; falls back to plain text in headless environments). On APX014, event times are self-calibrated microseconds (calibrating during the first 64 frames).
 
 ## 📄 Copyright
 

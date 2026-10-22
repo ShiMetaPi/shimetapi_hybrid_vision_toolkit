@@ -6,6 +6,7 @@
 #include "player_widgets.h"
 
 #include <shimetapi/codec/mipi_raw8_codec.h>
+#include <shimetapi/io/event_reader.h>
 
 #include <algorithm>
 #include <cctype>
@@ -61,23 +62,34 @@ bool VideoReader::readFrameAt(uint64_t target_index, cv::Mat& frame, Shimeta::Ev
 // ============================================================================
 // ApsFrameCache
 // ============================================================================
+/** @brief 配速/去重用的时间戳键：raw 优先（003=µs 域、014=tick 域，各自单调即可）。 */
+static uint64_t apsTsKey(const Shimeta::EvsTimestamp& t) {
+    return t.raw_timestamp != 0 ? t.raw_timestamp : t.processed_timestamp;
+}
 bool ApsFrameCache::open(const std::string& path, double fallback_fps) {
     frames_.clear(); timestamps_.clear();
-    return reader_.open(path, fallback_fps);
-}
-double ApsFrameCache::fps() const { return reader_.fps(); }
-size_t ApsFrameCache::frameCount() const {
+    if (!reader_.open(path, fallback_fps)) return false;
+    // 预扫全 AVI 并按时间戳去重：录制时每个事件帧都会把"最新 APS"重复写入 AVI
+    // （keep-latest 采样），不去重会导致播放时长虚长 N 倍、内存缓存 N 倍冗余帧。
     uint64_t total = reader_.totalFrameCount();
-    return total > 0 ? size_t(total) : frames_.size();
-}
-bool ApsFrameCache::frameAt(uint64_t index, cv::Mat& frame, uint64_t* actual_index) {
-    while (frames_.size() <= index) {
+    uint64_t last_key = 0;
+    for (uint64_t i = 0; i < total; ++i) {
         cv::Mat next;
         Shimeta::EvsTimestamp ts;
-        if (!reader_.readFrameAt(frames_.size(), next, &ts)) break;
+        if (!reader_.readFrameAt(i, next, &ts)) break;
+        const uint64_t key = apsTsKey(ts);
+        if (key != 0 && key == last_key) continue;   // 重复写入的同一帧，跳过
+        last_key = key;
         frames_.push_back(next.clone());
         timestamps_.push_back(ts);
     }
+    if (frames_.empty()) return false;
+    std::cout << "APS: AVI " << total << " 帧 -> 去重后 " << frames_.size() << " 唯一帧" << std::endl;
+    return true;
+}
+double ApsFrameCache::fps() const { return reader_.fps(); }
+size_t ApsFrameCache::frameCount() const { return frames_.size(); }
+bool ApsFrameCache::frameAt(uint64_t index, cv::Mat& frame, uint64_t* actual_index) {
     if (frames_.empty()) return false;
     size_t clamped = std::min<size_t>(size_t(index), frames_.size() - 1);
     if (actual_index) *actual_index = uint64_t(clamped);
@@ -88,6 +100,23 @@ Shimeta::EvsTimestamp ApsFrameCache::timestampAt(uint64_t index) const {
     if (timestamps_.empty()) return {};
     size_t clamped = std::min<size_t>(size_t(index), timestamps_.size() - 1);
     return timestamps_[clamped];
+}
+uint64_t ApsFrameCache::firstTimestamp() const {
+    return timestamps_.empty() ? 0 : apsTsKey(timestamps_.front());
+}
+uint64_t ApsFrameCache::lastTimestamp() const {
+    return timestamps_.empty() ? 0 : apsTsKey(timestamps_.back());
+}
+size_t ApsFrameCache::frameIndexForTimestamp(uint64_t ts) const {
+    if (timestamps_.empty()) return 0;
+    size_t lo = 0, hi = timestamps_.size() - 1;
+    if (apsTsKey(timestamps_[lo]) >= ts) return lo;
+    if (apsTsKey(timestamps_[hi]) <= ts) return hi;
+    while (lo + 1 < hi) {   // 二分：最大 key ≤ ts
+        size_t mid = (lo + hi) / 2;
+        if (apsTsKey(timestamps_[mid]) <= ts) lo = mid; else hi = mid;
+    }
+    return lo;
 }
 size_t ApsFrameCache::cachedFrameCount() const { return frames_.size(); }
 
@@ -101,8 +130,21 @@ bool EvsFrameSequence::open(const std::string& filename) {
         std::cerr << "无法打开事件文件: " << filename << std::endl;
         return false;
     }
+    // EVS 几何优先取 RAW 头（工具包 EventWriter 产物恒携带 width/height：
+    // 003=768×608、014=1280×1024——014 半场事件曾被 768×608 硬编码静默裁掉）。
+    // 头缺失/非法（hasHeaderSize()=false，如外部无头文件）时回退 003 几何并告警。
     width_ = 768;
     height_ = 608;
+    {
+        Shimeta::io::EventReader hdr;
+        if (hdr.open(filename) && hdr.hasHeaderSize()) {
+            width_  = hdr.evsWidth();
+            height_ = hdr.evsHeight();
+        } else {
+            std::cerr << "RAW header geometry missing/invalid, fallback to 768x608"
+                      << std::endl;
+        }
+    }
 
     Shimeta::codec::MipiRaw8Decoder decoder;
     std::vector<Shimeta::EventCD> all_events;
@@ -125,7 +167,11 @@ bool EvsFrameSequence::open(const std::string& filename) {
         return false;
     }
 
-    // 按时间窗口（4 个唯一时间戳 = 1 EVS 帧）累积为极性帧
+    // 按时间窗口累积为极性帧：003 几何（768×608）保留「4 个唯一时间戳 = 1 EVS 帧」
+    // 启发式（003 行为不变）；其它几何（014=1280×1024，逐子帧独立时间戳，每帧 32 个）
+    // 无该 4 子帧结构——直接每个唯一时间戳组一帧（播放粒度=子帧，最小改动）。
+    const uint64_t subframes_per_frame =
+        (width_ == 768 && height_ == 608) ? kEvsSubframesPerFrame : 1;
     frames_.clear();
     processed_timestamps_.clear();
     cv::Mat frame(height_, width_, CV_8UC1, cv::Scalar(0));
@@ -136,7 +182,7 @@ bool EvsFrameSequence::open(const std::string& filename) {
 
     for (const auto& e : all_events) {
         if (e.t != current_ts) {
-            if (unique_ts_in_frame >= kEvsSubframesPerFrame) {
+            if (unique_ts_in_frame >= subframes_per_frame) {
                 frames_.push_back(frame.clone());
                 processed_timestamps_.push_back(frame_has_timestamp ? frame_processed_timestamp : uint64_t(current_ts));
                 frame.setTo(cv::Scalar(0));
@@ -157,6 +203,7 @@ bool EvsFrameSequence::open(const std::string& filename) {
     frames_.push_back(frame.clone());
     processed_timestamps_.push_back(frame_has_timestamp ? frame_processed_timestamp : uint64_t(current_ts));
 
+    computeMedianGap();
     std::cout << "EVS frames cached: " << frames_.size() << std::endl;
     return !frames_.empty();
 }
@@ -205,6 +252,20 @@ uint64_t EvsFrameSequence::frameIndexForTimestamp(uint64_t timestamp, EvsStepMod
     return deltaAt(aligned_prev) <= deltaAt(aligned_next) ? aligned_prev : aligned_next;
 }
 std::pair<uint32_t, uint32_t> EvsFrameSequence::imageSize() const { return {width_, height_}; }
+/* 中位帧间隔：open() 尾部调用（processed_timestamps_ 已就绪）。 */
+void EvsFrameSequence::computeMedianGap() {
+    median_gap_us_ = 0;
+    if (processed_timestamps_.size() < 3) return;
+    std::vector<uint64_t> gaps;
+    gaps.reserve(processed_timestamps_.size() - 1);
+    for (size_t i = 1; i < processed_timestamps_.size(); ++i)
+        if (processed_timestamps_[i] > processed_timestamps_[i - 1])
+            gaps.push_back(processed_timestamps_[i] - processed_timestamps_[i - 1]);
+    if (gaps.empty()) return;
+    std::sort(gaps.begin(), gaps.end());
+    median_gap_us_ = gaps[gaps.size() / 2];
+}
+
 
 /** @brief 极性帧着色：mode 决定 ON/OFF 对应的颜色（蓝红或橙黄）。 */
 cv::Mat EvsFrameSequence::renderPolarityFrame(const cv::Mat& polarity, EvsColorMode mode) const {
