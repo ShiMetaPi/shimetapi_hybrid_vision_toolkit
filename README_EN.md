@@ -17,6 +17,13 @@ HV Toolkit (ShiMetaPi Hybrid Vision Toolkit) **v2.0** is a high-performance C++1
 - **Runtime MIPI fps tiers**: `DeviceConfig.evs_fps` (120/240/300/500/750/1000, applied at Init — no library rebuild).
 - **Zero third-party event-SDK dependencies**: the public surface is fully decoupled from legacy third-party event SDKs.
 
+### 2026-11 APX014 protocol update and migration
+
+- Matching x86_64, S100 and X5 libraries and public headers are updated together. The core remains distributed as closed-source `.so` files.
+- APX014 EVS uses a 40B DVS1 header with EVT2 payload; APS uses an 80B header with Gray8 640×1024 pixels. Legacy APX014 subframe firmware and 1280×1024 recordings are unsupported by the current decoder. APX003 RAW8 remains supported.
+- `HybridWriter::open()` gains a pixel-format argument; `HybridReader` gains `apsFormat()`. Update libraries and headers together and rebuild applications from a clean build directory. The unchanged `.so.2` SONAME does not imply ABI compatibility.
+- The x86_64 Python 3.10 module is rebuilt. Python can capture APX014 raw data, but `Evs014PacketDecoder` is not yet exported; use the C++ `viewer` / `ts_sync` samples for decoding.
+
 ## 📋 Specifications
 
 ### Event camera parameters
@@ -24,9 +31,9 @@ HV Toolkit (ShiMetaPi Hybrid Vision Toolkit) **v2.0** is a high-performance C++1
 | Sensor | EVS resolution | APS resolution |
 | --- | --- | --- |
 | APX003 | 768×608 (subsampling: 384×304) | 768×608 (NV12) |
-| APX014 | 1280×1024 | 640×1024 (NV12) |
+| APX014 | 640×1024 (DVS1 / EVT2 packets) | 640×1024 (Gray8) |
 
-The x86_64 USB backend detects APX003/APX014 during `Init` from the first APS transfer length (700,424B / 983,048B), then selects the read lengths and image sizes automatically. APX014 events stream at 600fps by default.
+The x86_64 USB backend detects APX003/APX014 during `Init` from the first APS transfer length (700,424B / 655,440B), then selects the read lengths and image sizes automatically. APX014 events stream at 600fps by default.
 Transport: USB 3.0 / MIPI-CSI / TCP. Event formats: EVT2 / EVT3.
 
 ## 🔧 Dependencies
@@ -35,7 +42,7 @@ Transport: USB 3.0 / MIPI-CSI / TCP. Event formats: EVT2 / EVT3.
 | --- | --- | --- |
 | **libusb-1.0** (`libusb-1.0-0`) | USB backend runtime | x86_64 |
 | **aarch64 cross toolchain** (`g++-aarch64-linux-gnu`) | cross-compiling s100/x5 samples | s100, x5 (cross) |
-| **OpenCV** | `viewer` / `player` / `live_record_display` samples (cross builds use the bundled `third_party/aarch64_opencv`) | samples, optional |
+| **OpenCV** | `ts_sync` / `player` / `live_record_display` samples (cross builds use the bundled `third_party/aarch64_opencv`) | samples, optional |
 
 > v2.0 has **no third-party event SDK dependency** — the codecs are an independent clean-room implementation. OpenCV is only used by sample visualizers, not the core.
 
@@ -183,7 +190,7 @@ on the S100 board); in USB mode the first two positional args set VID/PID
 # output: callback: events=N images=M
 
 # record — EVS + APS mixed recording (writes /tmp/hv_record.raw + .avi)
-./out/x86_64/build/samples/cpp/record/hv_sample_record
+./out/x86_64/build/samples/cpp/record/hv_sample_record --duration 5
 
 # viewer — live capture with decode counting
 ./out/x86_64/build/samples/cpp/viewer/hv_sample_viewer
@@ -322,7 +329,7 @@ On 2026-10 firmware, USB command `0x07` reboots the device. The updated x86_64 l
 
 ### USB 2.0 bandwidth
 
-**Stuttering playback / disordered timestamp pairing / frame rate far below spec (014 especially)**: the camera may be on a USB 2.0 port or behind a 2.0-only cable/hub — 014 needs ~158MB/s at full rate vs USB 2.0's ~35MB/s, so the stream gets throttled to a fraction (EVS 600→48fps, APS 60→10fps). Verify with `lsusb -t` that the camera sits on a `5000M` (USB 3.0) bus; if it shows `480M`, move it to a rear USB 3.0 port directly on the motherboard.
+**Stuttering playback or low throughput**: check `lsusb -t` for a `5000M` (USB 3.0) bus. If it shows `480M`, use a motherboard USB 3.0 port and a suitable cable. New-format APX014 EVS throughput varies with scene activity.
 
 ## 📁 Repository layout
 
@@ -354,21 +361,21 @@ shimetapi_Hybrid_vision_toolkit/
 |---|---|---|---|
 | `get_started` | Minimal capture (sync GetFrame) | USB / `--mipi` | `hv_sample_get_started [vid pid] [--mipi]` |
 | `callback` | Event + APS async callbacks | USB / `--mipi` / `--mipi-hvs` | `hv_sample_callback [--mipi-hvs]` |
-| `record` | EVS+APS recording to /tmp | USB / `--mipi` / `--mipi-hvs` | `hv_sample_record [--mipi-hvs]` |
+| `record` | EVS+APS recording to /tmp | USB / `--mipi` / `--mipi-hvs` | `hv_sample_record [--duration S] [--mipi-hvs]` |
 | `viewer` | Live capture + decode counting | USB / `--mipi` / `--mipi-hvs` | `hv_sample_viewer [--mipi]` |
 | `bench_hw` | USB throughput benchmark | USB | `hv_sample_bench_hw [vid pid duration_s]` |
 | `live_record_display` | MIPI-HVS live preview + record (OpenCV) | MipiHvs | `hv_sample_live_record_display [--no-display] [--evs-prefix s] [--aps-prefix s]` |
-| `player` | Offline playback of .raw + .avi (OpenCV) | offline | `hv_sample_player <events.raw> <video.avi> [fps] [speed]` |
+| `player` | Offline playback of .raw + .avi (OpenCV) | offline | `hv_sample_player <events.raw> [video.avi] [fps] [speed]` |
 
 Notes:
 
 - **get_started**: the starter — Init → StartStream → GetFrame ×10, prints per-frame evs bytes.
 - **callback**: `SetEventCallback` / `SetImageCallback` dual async callbacks; prints counts after 2 s.
-- **record**: `HybridWriter` writes 10 frames to `/tmp/hv_record.raw` (EVS) + `/tmp/hv_record.avi` (APS).
-- **viewer**: streams and auto-selects the decoder per backend (USB=EVT2, MIPI=MipiRaw8); prints total decoded events.
+- **record**: `HybridWriter` records for a duration (default 3 s, `--duration 5` for 5 s) to `/tmp/hv_record.raw` (EVS) + `/tmp/hv_record.avi` (APS).
+- **viewer**: streams and auto-selects the decoder per backend (USB dispatches APX003 RAW8 / APX014 DVS1 by packet content, MIPI=MipiRaw8); prints total decoded events.
 - **bench_hw**: timed USB benchmark (default `0x1d6b:0x0105`, 5 s), prints Mev/s and APS fps.
 - **live_record_display**: MIPI-HVS dual-VC live preview (EVS left / APS right) + `r`-key recording via `HybridWriter`.
-- **player**: `HybridReader` + `MipiRaw8Decoder` playback with GUI controls (play/pause/step/speed/sync).
+- **player**: `HybridReader` + the sensor-specific decoder play EVS and NV12/Gray8 APS recordings with GUI controls (play/pause/step/speed/sync).
 
 The two new samples are enabled for the x86_64 prebuilt release; `ts_sync` requires OpenCV.
 
@@ -376,7 +383,7 @@ The two new samples are enabled for the x86_64 prebuilt release; `ts_sync` requi
 Runtime frame-rate control teaching sample: identify the sensor → query the current setting → switch to a new setting → verify via readback → compare event rates (3s). Demonstrates the full usage of `Camera::SetFrameRate/GetFrameRate` (APX014 gears: 240/300/480/600; APX003 accepts 120~1000). Switching the frame-rate gear triggers a device-side pipeline restart; the sample demonstrates the correct way to reopen the camera after switching.
 
 ### ts_sync
-Timestamp synchronization teaching sample: the APS frame-tail timestamp and EVS event timestamps share the same source and domain. The sample performs live "equal/nearest" pairing display (dual-panel GUI + residual/calibration/monotonicity status; falls back to plain text in headless environments). On APX014, event times are self-calibrated microseconds (calibrating during the first 64 frames).
+Timestamp pairing sample: APX003 uses the APS frame-tail timestamp; APX014 uses the 80B APS header timestamp and the 40B EVS packet header timestamp in the same clock domain. Displays nearest/equal pairing, residuals and monotonicity, with a text fallback in headless environments. APX014 timestamps convert directly to microseconds without self-calibration.
 
 ## 📄 Copyright
 

@@ -1,9 +1,9 @@
 // ts_sync: EVS↔APS 同源时间戳配对教学示例（GUI；无显示器自动回退纯文本）。
 //   ./hv_sample_ts_sync [vid] [pid]    (默认 0x1d6b 0x0105)
-// 核心机制：APS 帧尾 8B = 设备 /evs_frame_ts 侧信道注入的"组帧时最新 EVS ts"——
-// 与事件 t 同源同域。收到 APS 帧 → 在 EVS 帧序列中二分查找相等/最近 ts 的帧配对显示。
-//   003：事件 t(µs) 直接与 aps 尾(µs) 配对；
-//   014：事件 t 为校准 µs，aps 尾(tick) 用 (tick − rawTickBase())×1e6/tickHz() 换算到同轴。
+// 核心机制：APS 帧时间戳与事件 t 同源同域。收到 APS 帧 → 在 EVS 帧序列中二分查找
+// 相等/最近 ts 的帧配对显示。
+//   003：APS 尾 8B（µs×1000=ns）与事件 t(µs) 配对；
+//   014（CF-NRS3 新格式）：APS 80B 帧头墙钟 ns 与包事件 t（包头 sec×1e6+usec，µs）配对。
 // 架构（教学点⑥）：环形缓存必须由事件回调满速喂——GetFrame 的 latest 语义会跳帧，
 //   稀疏环会让配对退化为稀疏网格最近邻（014@600fps 实测 1/10 稀疏 → 1375µs 量化残差）；
 //   故 EVS 解码+喂环在事件回调线程满速进行，主循环只取"最新 APS"+加锁快照做配对与渲染。
@@ -16,6 +16,7 @@
 #include <thread>
 #include <vector>
 #include <opencv2/opencv.hpp>
+#include <shimetapi/codec/evs_packet_codec.h>
 #include <shimetapi/codec/mipi_raw8_codec.h>
 #include <shimetapi/hv/camera.h>
 #include <shimetapi/hv/device_config.h>
@@ -25,7 +26,7 @@ namespace {
 constexpr int kMaxEvsFrames = 900;   // 滚动缓存 ≈1.5s @600fps
 
 struct EvsFrame {
-    uint64_t ts = 0;                 // 事件 µs（014 为校准域）
+    uint64_t ts = 0;                 // 事件 µs（003=子帧 ts/200；014=包头墙钟 sec×1e6+usec，无校准）
     cv::Mat  polarity;               // 单通道极性图（1=ON, 2=OFF）
 };
 
@@ -94,13 +95,14 @@ struct SharedState {
     long                 mono_violation = 0;
 };
 
-/// 图像回调线程发布的"最新 APS 帧"（NV12 字节拷贝——回调返回后 slab 可能被池回收）。
+/// 图像回调线程发布的"最新 APS 帧"（字节拷贝——回调返回后 slab 可能被池回收）。
 struct LatestAps {
     std::mutex           mu;
     uint64_t             seq = 0;     // 每帧 +1：主循环据此识别新 APS 帧
-    uint64_t             ts_raw = 0;  // APS 尾 ts 原值（003=ns、014=tick、0=无效）
+    uint64_t             ts_raw = 0;  // APS ts 原值（003 尾=ns、014 帧头墙钟=ns、0=无效）
     int                  width = 0, height = 0;
-    std::vector<uint8_t> nv12;
+    Shimeta::PixelFormat fmt = Shimeta::PixelFormat::NV12;   // 003=NV12 / 014=Gray8
+    std::vector<uint8_t> nv12;                      // 原始像素字节（按 fmt 解释）
 };
 
 } // namespace
@@ -114,7 +116,8 @@ int main(int argc, char** argv) {
     std::printf("ts_sync: using USB backend\n");
 
     // 声明序保证回调捕获的对象存活到 cam.Destroy() 之后（析构逆序：cam 先亡）
-    codec::MipiRaw8Decoder dec;      // 仅事件回调线程 Decode——满足解码器单线程契约
+    codec::MipiRaw8Decoder dec;          // 003 RAW8 子帧（仅事件回调线程 Decode）
+    codec::Evs014PacketDecoder dec014;   // 014 变长包聚帧（仅事件回调线程 Decode）
     SharedState shared;
     LatestAps latest;
     hv::Camera cam;
@@ -128,14 +131,17 @@ int main(int argc, char** argv) {
     // （解码+渲染代价），环只被喂 1/10 的帧，配对落在稀疏网格上（014@600fps 实测 1375µs 量化残差）。
     cam.SetEventCallback([&](const hv::EventPacket& pkt) {
         std::vector<EventCD> ev;
-        dec.Decode(pkt.data.data, pkt.data.size, ev);
+        // 按内容分派：014 新格式变长包以 40B 头 "DVS1" 魔数开头；003 为 RAW8 子帧流
+        const bool is014 = pkt.data.size >= codec::kEvsHdrLen &&
+                           codec::evsPacketLooksLikeHeader(pkt.data.data);
+        if (is014) dec014.Decode(pkt.data.data, pkt.data.size, ev);
+        else       dec.Decode(pkt.data.data, pkt.data.size, ev);
         std::lock_guard<std::mutex> lk(shared.mu);
-        if (shared.evs_w == 0) {     // 几何定档：014 整帧恒 164,864B；003 chunk 为 32,768 倍数
-            if (codec::isApx014Chunk(pkt.data.size)) {
-                shared.evs_w = codec::MipiRaw014Layout::kEvsWidth;    // 1280×1024
-                shared.evs_h = codec::MipiRaw014Layout::kEvsHeight;
+        if (shared.evs_w == 0) {     // 几何定档：同上按包内容分派
+            if (is014) {
+                shared.evs_w = 640; shared.evs_h = 1024;              // 014：640×1024（设备画布，无插值）
             } else {
-                shared.evs_w = codec::MipiRaw8Layout::kEvsWidth;      // 768×608
+                shared.evs_w = codec::MipiRaw8Layout::kEvsWidth;      // 003：768×608
                 shared.evs_h = codec::MipiRaw8Layout::kEvsHeight;
             }
         }
@@ -145,13 +151,14 @@ int main(int argc, char** argv) {
         if (!shared.ring.empty()) shared.last_ev_ts = shared.ring.back().ts;
     });
 
-    // 图像回调：存"最新 APS 帧"（NV12 拷贝 + 尾 ts 原值），主循环直接消费
+    // 图像回调：存"最新 APS 帧"（像素拷贝 + ts 原值），主循环直接消费
     cam.SetImageCallback([&](const hv::ImageData& img) {
         std::lock_guard<std::mutex> lk(latest.mu);
         ++latest.seq;
         latest.ts_raw = uint64_t(img.ts.aps_ts_ns);
         latest.width  = img.width;
         latest.height = img.height;
+        latest.fmt    = img.format;
         latest.nv12.assign(img.pixels.data, img.pixels.data + img.pixels.size);
     });
 
@@ -177,6 +184,7 @@ int main(int argc, char** argv) {
     cv::Mat hit_polarity;
     std::vector<uint8_t> aps_bytes;
     int aps_w = 0, aps_h = 0;
+    PixelFormat aps_fmt = PixelFormat::NV12;
     auto lastPrint = std::chrono::steady_clock::now();
 
     while (true) {
@@ -200,14 +208,12 @@ int main(int argc, char** argv) {
                 aps_w = latest.width;
                 aps_h = latest.height;
                 aps_ts_raw = latest.ts_raw;
+                aps_fmt = latest.fmt;
             }
         }
-        const bool is014 = (aps_w == 640);
 
         if (fresh) {
             // 加锁快照环形缓存做配对（拷贝命中帧极性图，避免持锁渲染）。
-            // 校准状态（calibrated/tickHz/rawTickBase）只在主循环读、回调线程写：
-            // 教学示例按宽松原子性读（对齐 bool/double），最坏读到上一轮旧值，下一轮刷新。
             std::lock_guard<std::mutex> lk(shared.mu);
             idx = -1;
             aps_us = 0;
@@ -235,30 +241,20 @@ int main(int argc, char** argv) {
             if (aps_ts_raw == 0) {
                 ++skipped_tail0;                                    // 侧信道超时/未启动（规格 §8）
             } else {
-                uint64_t us = 0;
-                bool us_valid = false;
-                if (!is014) {
-                    us = aps_ts_raw / 1000;                         // 003：ns → µs 直接配对
-                    us_valid = true;
-                } else if (dec.calibrated() && dec.tickHz() > 0) {
-                    // 014：尾值原始 tick，换算到事件校准 µs 轴——与解码器逐位一致的 u32 模运算公式（回绕安全）
-                    const uint32_t diff = uint32_t(aps_ts_raw) - dec.rawTickBase();
-                    us = uint64_t(double(diff) * 1e6 / dec.tickHz());
-                    us_valid = true;
+                // 双型号 ts 均为 ns（003=尾 µs×1000、014=帧头墙钟 sec×1e9+usec×1000）
+                // → µs 后与事件 t（003=子帧 ts/200；014=包头 sec×1e6+usec）同轴直接配对。
+                const uint64_t us = aps_ts_raw / 1000;
+                const int t_idx = nearestFrame(shared.ring, us);
+                uint64_t t_res = 0;
+                if (t_idx >= 0) t_res = (shared.ring[size_t(t_idx)].ts > us) ? shared.ring[size_t(t_idx)].ts - us : us - shared.ring[size_t(t_idx)].ts;
+                if (!repaired) {               // 本轮无补配终态 → 本帧配对即显示/计数
+                    idx = t_idx;
+                    aps_us = us;
+                    residual_us = t_res;
                 }
-                if (us_valid) {
-                    const int t_idx = nearestFrame(shared.ring, us);
-                    uint64_t t_res = 0;
-                    if (t_idx >= 0) t_res = (shared.ring[size_t(t_idx)].ts > us) ? shared.ring[size_t(t_idx)].ts - us : us - shared.ring[size_t(t_idx)].ts;
-                    if (!repaired) {               // 本轮无补配终态 → 本帧配对即显示/计数
-                        idx = t_idx;
-                        aps_us = us;
-                        residual_us = t_res;
-                    }
-                    // pending 维护：最佳命中早于 aps 且未精确（引用子帧可能还在路上）→ 存入待下轮补配；否则清零
-                    if (t_idx >= 0 && shared.ring[size_t(t_idx)].ts < us && t_res > 0) pending_aps_us = us;
-                    else pending_aps_us = 0;
-                }
+                // pending 维护：最佳命中早于 aps 且未精确（引用子帧可能还在路上）→ 存入待下轮补配；否则清零
+                if (t_idx >= 0 && shared.ring[size_t(t_idx)].ts < us && t_res > 0) pending_aps_us = us;
+                else pending_aps_us = 0;
             }
             if (idx >= 0) {                        // 最终配对计数（补配成功计 0 残差）
                 ++matched;
@@ -278,24 +274,25 @@ int main(int argc, char** argv) {
             mono_now = shared.mono_violation;
         }
 
-        // 呈现
-        cv::Mat aps_img = (aps_bytes.size() > 0) ? nv12ToBgr(aps_bytes.data(), aps_w, aps_h) : cv::Mat();
+        // 呈现（003=NV12 / 014=Gray8）
+        cv::Mat aps_img;
+        if (aps_bytes.size() > 0) {
+            if (aps_fmt == PixelFormat::Gray8) {
+                const cv::Mat gray(aps_h, aps_w, CV_8UC1, aps_bytes.data());
+                cv::cvtColor(gray, aps_img, cv::COLOR_GRAY2BGR);
+            } else {
+                aps_img = nv12ToBgr(aps_bytes.data(), aps_w, aps_h);
+            }
+        }
         char status[512];
-        char calib_note[32];
-        if (!is014)
-            std::snprintf(calib_note, sizeof(calib_note), "n/a");
-        else if (dec.calibrated())
-            std::snprintf(calib_note, sizeof(calib_note), "%.2fMHz", dec.tickHz() / 1e6);
-        else
-            std::snprintf(calib_note, sizeof(calib_note), "%d/64", dec.calibSamples());
-        char evs_note[32];   // 命中帧 ts 原值；未命中（尾 0 / 014 校准期）显示 --
+        char evs_note[32];   // 命中帧 ts 原值；未命中（尾/ts 0）显示 --
         if (idx >= 0)
             std::snprintf(evs_note, sizeof(evs_note), "%lluus", (unsigned long long)hit_ts);
         else
             std::snprintf(evs_note, sizeof(evs_note), "--");
         std::snprintf(status, sizeof(status),
-            "pair: aps=%lluus evs=%s -> EVS#%d  residual: %llu us  | calib: %s | mono:%s | tail0=%ld warn=%ld matched=%ld | q quit",
-            (unsigned long long)aps_us, evs_note, idx, (unsigned long long)residual_us, calib_note,
+            "pair: aps=%lluus evs=%s -> EVS#%d  residual: %llu us  | mono:%s | tail0=%ld warn=%ld matched=%ld | q quit",
+            (unsigned long long)aps_us, evs_note, idx, (unsigned long long)residual_us,
             mono_now == 0 ? "OK" : "VIOL", skipped_tail0, residual_warn, matched);
         if (gui) {
             int ew = 0, eh = 0;

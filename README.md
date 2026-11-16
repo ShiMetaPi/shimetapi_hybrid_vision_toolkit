@@ -17,6 +17,13 @@ HV Toolkit（ShiMetaPi Hybrid Vision Toolkit）**v2.0** 是面向事件相机（
 - **MIPI 帧率档运行时选择**：`DeviceConfig.evs_fps`（120/240/300/500/750/1000，Init 时生效，无需重编库）。
 - **零第三方事件 SDK 依赖**：公有表面已与旧版第三方事件 SDK 完全解耦。
 
+### 2026-11 APX014 协议更新与升级
+
+- x86_64、S100、X5 配套库与公共头文件一起更新；核心仍以闭源 `.so` 交付。
+- APX014 EVS 使用 40B DVS1 包头与 EVT2 负载，APS 使用 80B 帧头与 Gray8 640×1024。旧 APX014 子帧固件和旧 1280×1024 录像不受当前解码器支持；APX003 RAW8 路径保留。
+- `HybridWriter::open()` 增加像素格式参数，`HybridReader` 增加 `apsFormat()`。请配套更新头文件和库，删除旧构建目录后重新编译应用，不要混用旧 `.so.2`；SONAME 未变不代表 ABI 兼容。
+- x86_64 Python 3.10 模块同步重编译。Python 可采集 APX014 原始数据，但尚未导出 `Evs014PacketDecoder`；新协议解码示例见 C++ `viewer` / `ts_sync`。
+
 ## 📋 技术规格
 
 ### 支持设备（事件相机参数）
@@ -24,9 +31,9 @@ HV Toolkit（ShiMetaPi Hybrid Vision Toolkit）**v2.0** 是面向事件相机（
 | 传感器 | EVS 分辨率 | APS 分辨率 | 备注 |
 | --- | --- | --- | --- |
 | **APX003** | 768×608（子采样：384×304） | 768×608（NV12） | |
-| **APX014** | 1280×1024 | 640×1024（NV12） | 事件流 600fps |
+| **APX014** | 640×1024（DVS1 / EVT2 包流） | 640×1024（Gray8） | 事件流 600fps |
 
-- **双传感器自动识别**：USB 后端 `Init` 时按 **APS 首帧传输长度**探测档位（700,424B→APX003；983,048B→APX014），无需任何配置；识别结果打印 `[usb] sensor=APX003` / `[usb] sensor=APX014`，读长与图像尺寸随之自动切换。
+- **双传感器自动识别**：USB 后端 `Init` 时按 **APS 首帧传输长度**探测档位（700,424B→APX003；655,440B→APX014），无需任何配置；识别结果打印 `[usb] sensor=APX003` / `[usb] sensor=APX014`，读长与图像尺寸随之自动切换。
 - **数据传输**：USB 3.0（USB 后端）/ MIPI-CSI（MIPI 后端）/ TCP（Ethernet 后端）
 - **事件格式**：EVT2 / EVT3（兼容 Prophesee EventCD 语义）
 
@@ -37,7 +44,7 @@ HV Toolkit（ShiMetaPi Hybrid Vision Toolkit）**v2.0** 是面向事件相机（
 | --- | --- | --- |
 | **libusb-1.0**（`libusb-1.0-0`） | USB 后端运行库 | x86_64 |
 | **aarch64 交叉工具链**（`g++-aarch64-linux-gnu`） | s100/x5 交叉编译示例 | s100、x5（交叉编时） |
-| **OpenCV** | `viewer` / `player` / `live_record_display` 示例（交叉编用仓库自带 `third_party/aarch64_opencv`） | 示例可选 |
+| **OpenCV** | `ts_sync` / `player` / `live_record_display` 示例（交叉编用仓库自带 `third_party/aarch64_opencv`） | 示例可选 |
 
 > v2.0 **不再依赖**第三方事件 SDK —— 编解码为独立 clean-room 实现。OpenCV 仅在示例可视化中用到，非核心依赖。
 
@@ -202,7 +209,7 @@ USB 模式可用前两个位置参数指定 VID/PID（默认 `0x1d6b 0x0105`）�
 # 输出：callback: events=N images=M
 
 # record — 事件 + APS 混合录制（写 /tmp/hv_record.raw + .avi）
-./out/x86_64/build/samples/cpp/record/hv_sample_record
+./out/x86_64/build/samples/cpp/record/hv_sample_record --duration 5
 
 # viewer — 实时采集解码计数
 ./out/x86_64/build/samples/cpp/viewer/hv_sample_viewer
@@ -351,7 +358,7 @@ v2.0 已改用 **`0x0A`（CLEAR_SHM）** 清设备端共享内存（保持推流
 
 ### USB 2.0 带宽不足
 
-**画面卡顿/时间戳配对紊乱/帧率远低于规格（014 尤其明显）**：相机可能插在了 USB 2.0 口或经仅 2.0 的线材/扩展坞连接——014 满速需 ~158MB/s，USB 2.0 只有 ~35MB/s，流会被截到零头（EVS 600→48fps、APS 60→10fps）。用 `lsusb -t` 确认相机挂在 `5000M` 的总线上（USB 3.0）；显示 `480M` 请换主板后置 USB 3.0 口直连。
+**回放卡顿或吞吐偏低**：先用 `lsusb -t` 检查相机是否连接到 `5000M`（USB 3.0）总线；若显示 `480M`，改用主板 USB 3.0 接口及配套线缆。APX014 新格式 EVS 吞吐随场景事件量变化。
 
 ## 📁 项目结构
 
@@ -383,21 +390,21 @@ shimetapi_Hybrid_vision_toolkit/
 |---|---|---|---|
 | `get_started` | 最小采集（同步 GetFrame） | USB / `--mipi` | `hv_sample_get_started [vid pid] [--mipi]` |
 | `callback` | 事件 + APS 异步回调 | USB / `--mipi` / `--mipi-hvs` | `hv_sample_callback [--mipi-hvs]` |
-| `record` | EVS+APS 混合录制到 /tmp | USB / `--mipi` / `--mipi-hvs` | `hv_sample_record [--mipi-hvs]` |
+| `record` | EVS+APS 混合录制到 /tmp | USB / `--mipi` / `--mipi-hvs` | `hv_sample_record [--duration S] [--mipi-hvs]` |
 | `viewer` | 实时采集 + 解码计数 | USB / `--mipi` / `--mipi-hvs` | `hv_sample_viewer [--mipi]` |
 | `bench_hw` | USB 实机吞吐基准 | USB | `hv_sample_bench_hw [vid pid duration_s]` |
 | `live_record_display` | MIPI-HVS 实时预览 + 录制（OpenCV） | MipiHvs | `hv_sample_live_record_display [--no-display] [--evs-prefix s] [--aps-prefix s]` |
-| `player` | 离线回放 .raw + .avi（OpenCV） | 离线 | `hv_sample_player <events.raw> <video.avi> [fps] [speed]` |
+| `player` | 离线回放 .raw + .avi（OpenCV） | 离线 | `hv_sample_player <events.raw> [video.avi] [fps] [speed]` |
 
 详细说明：
 
 - **get_started**：基础入门，Init → StartStream → GetFrame 10 帧，打印每帧 evs 字节数。学习 HV Toolkit 的最佳起点。
 - **callback**：`SetEventCallback` / `SetImageCallback` 双异步回调演示，采集 2 秒后打印计数。
-- **record**：`HybridWriter` 把 10 帧写入 `/tmp/hv_record.raw`（EVS）+ `/tmp/hv_record.avi`（APS）。
-- **viewer**：拉流并按后端自动选解码器（USB=EVT2，MIPI=MipiRaw8），打印累计解码事件数。
+- **record**：`HybridWriter` 按时长录制（默认 3 秒，`--duration 5` 指定 5 秒），写入 `/tmp/hv_record.raw`（EVS）+ `/tmp/hv_record.avi`（APS）。
+- **viewer**：拉流并按后端自动选解码器（USB 按包内容分派 APX003 RAW8 / APX014 DVS1，MIPI=MipiRaw8），打印累计解码事件数。
 - **bench_hw**：USB 实机计时基准（默认 `0x1d6b:0x0105`，5 秒），输出 Mev/s 与 APS fps。
 - **live_record_display**：MIPI-HVS 双 VC 实时预览（左 EVS 可视化 / 右 APS）+ `r` 键录制，`HybridWriter` 落盘。
-- **player**：`HybridReader` + `MipiRaw8Decoder` 回放录制文件，带 GUI 按钮（播放/暂停/步进/变速/同步）。
+- **player**：`HybridReader` + 对应传感器解码器回放 EVS 与 NV12/Gray8 APS 录制文件，带 GUI 按钮（播放/暂停/步进/变速/同步）。
 
 新增两个示例仅在 x86_64 预编译版启用；`ts_sync` 需要 OpenCV。
 
@@ -407,7 +414,7 @@ shimetapi_Hybrid_vision_toolkit/
 
 ### ts_sync
 
-时间戳同步教学：APS 帧尾时间戳与 EVS 事件时间戳同源同域，示例实时做"相等/最近"配对显示（GUI 双窗 + 残差/校准状态；无显示环境回退纯文本）。014 事件时间为自校准微秒（首 64 帧校准中）。
+时间戳同步教学：APX003 使用 APS 帧尾时间戳；APX014 使用 80B APS 帧头时间戳，与 40B EVS 包头时间戳同源同域。示例实时做“相等/最近”配对显示（GUI 双窗、残差与单调性状态；无显示环境回退纯文本）。APX014 时间戳直接换算为微秒，无自校准环节。
 
 ## 📄 版权声明
 

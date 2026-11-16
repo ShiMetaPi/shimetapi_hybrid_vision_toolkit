@@ -59,10 +59,12 @@ static void installSignalHandlers() {
 
 int main(int argc, char** argv) {
     installSignalHandlers();
-    if (argc < 3) { printUsage(argv[0]); return 1; }
+    if (argc < 2) { printUsage(argv[0]); return 1; }
 
     std::string raw_path = argv[1];
-    std::string avi_path = argv[2];
+    // AVI 可缺省（无 APS 的录制）：此时 EVS 单轨回放，APS 侧显示空白。
+    // 014 录制现也含 APS AVI（Gray8，readFrameAt 按格式转 BGR）。
+    std::string avi_path = (argc >= 3) ? argv[2] : "";
     bool dump_timestamps = false;
     double fallback_fps = 30.0, speed = 1.0;
     int numeric_arg = 0;
@@ -87,7 +89,8 @@ int main(int argc, char** argv) {
 
     // ---- 加载 APS ----
     ApsFrameCache video_cache;
-    if (!video_cache.open(avi_path, fallback_fps)) {
+    const bool has_aps = !avi_path.empty() && video_cache.open(avi_path, fallback_fps);
+    if (!avi_path.empty() && !has_aps) {
         std::cerr << "Failed to open AVI: " << avi_path << std::endl;
         return 1;
     }
@@ -96,7 +99,10 @@ int main(int argc, char** argv) {
 
     auto img_size = evs_seq.imageSize();
     std::cout << "EVS raw: " << raw_path << " (" << img_size.first << "x" << img_size.second << ")\n";
-    std::cout << "APS AVI: " << avi_path << ", fps=" << video_cache.fps() << "\n";
+    if (has_aps)
+        std::cout << "APS AVI: " << avi_path << ", fps=" << video_cache.fps() << "\n";
+    else
+        std::cout << "APS AVI: (none) — EVS-only playback\n";
     std::cout << "Speed: " << speed << "x\n";
     std::cout << "Keys: q/ESC quit, Space pause, a/d step, click buttons\n";
 
@@ -111,17 +117,18 @@ int main(int argc, char** argv) {
     bool sync_initialized = false;
 
     // ---- 配速映射：帧号均匀推进（对录制内时间戳质量免疫）。
-    // 总时长 T：003 的 EVS 时间戳为真实微秒（可靠）→ T=ts 跨度；014 的离线时间戳
-    // 域不可靠（标定比例失真/间隔不均）→ T=帧数/标称 600fps。两轨进度均按
-    // 帧号占比 × T 线性推进，同起同止；ts 仅用于 SyncOn 对齐与显示。
+    // 总时长 T：003 的 EVS 时间戳为真实微秒（可靠）→ T=中位间隔×帧数；014 新格式
+    // （头几何 640×1024）的聚帧时间戳为包头墙钟，丢帧/空帧时间戳缺失且间隔不均
+    // → T=帧数/标称 600fps。两轨进度均按帧号占比 × T 线性推进，同起同止；
+    // ts 仅用于 SyncOn 对齐与显示。
     const uint64_t evs_t0 = evs_seq.processedTimestampAt(0);
     const uint64_t evs_t1 = evs_seq.processedTimestampAt(evs_seq.frameCount() > 0 ? evs_seq.frameCount() - 1 : 0);
     const uint64_t evs_span = evs_t1 > evs_t0 ? evs_t1 - evs_t0 : 0;
-    const bool is014 = img_size.first == 1280 && img_size.second == 1024;
+    const bool is014 = img_size.first == 640 && img_size.second == 1024;
     const size_t evs_frames = evs_seq.frameCount();
     const size_t aps_frames = video_cache.frameCount();
     // 003：中位帧间隔×帧数（对 ts 大跳变免疫——实测跳变把首尾跨度灌水 4 倍）；
-    // 014：标称 600fps（离线校准域失真，不采信）；均无效时 240fps 口径兜底。
+    // 014：标称 600fps（包头墙钟不采信）；均无效时 240fps 口径兜底。
     const uint64_t median_gap = evs_seq.medianFrameGapUs();
     uint64_t total_us = 0;
     if (!is014 && median_gap > 0)

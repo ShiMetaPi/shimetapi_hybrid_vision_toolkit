@@ -77,26 +77,26 @@ enum class PixelFormat : uint8_t { BayerRG8 = 0, RGB888 = 1, Gray8 = 2, RAW8 = 3
 ```cpp
 struct TimestampInfo {
     int64_t evs_ts_ns  = 0;  // EVS 事件参考时间戳（纳秒）
-    int64_t aps_ts_ns  = 0;  // APS 尾时间戳（对齐句柄：组帧时设备注入的最新 EVS ts；003=ns、014=原始 tick（非 ns），0=无效）
+    int64_t aps_ts_ns  = 0;  // APS 帧时间戳（对齐句柄；003=尾时间戳 ns、014=80B 帧头墙钟 ns，0=无效）
     bool    ptp_locked = false; // Ethernet 后端 PTP 是否锁定
 };
 ```
 
-> `aps_ts_ns`（USB 后端，2026-10+）：APX003 = APS 尾时间戳(µs)×1000；APX014 = 原始传感器 tick（非 ns），与事件 t 同源，用 `MipiRaw8Decoder::tickHz()/rawTickBase()` 换算到事件 µs 轴；0 = 无效（侧信道超时）。参见示例 `samples/cpp/ts_sync`。注意 `tickHz()` 由主机到达率估算，绝对微秒刻度为近似值；同域配对不受影响（精确）。
+> `aps_ts_ns`（USB 后端，2026-10+）：APX003 = APS 尾时间戳(µs)×1000；APX014 = 80B 帧头墙钟（`sec×1e9+usec×1000`，ns），与事件 t（包头墙钟 µs，`sec×1e6+usec`）同源同域，可直接配对（无校准环节）；0 = 无效（侧信道超时）。参见示例 `samples/cpp/ts_sync`。
 
 ### `Shimeta::EvsTimestamp`（`core/evs_timestamp.h`）
 
-EVS 传感器内部时间戳（从 MIPI RAW8 子帧头提取），用于 `HybridWriter` / `HybridReader` 的 tsmp chunk。由 `Shimeta::codec::extractEvsTimestamp()` 提取。
+EVS 传感器内部时间戳（从 apx003 MIPI RAW8 子帧头提取），用于 `HybridWriter` / `HybridReader` 的 tsmp chunk。由 `Shimeta::codec::extractEvsTimestamp()` 提取。
 
 ```cpp
 struct EvsTimestamp {
-    uint64_t raw_timestamp = 0;         // 传感器原始时间戳（APX003：45-bit；APX014：u32 tick）
-    uint64_t processed_timestamp = 0;   // 微秒。APX003：raw/200；APX014：恒 0
+    uint64_t raw_timestamp = 0;         // 传感器 45-bit 原始时间戳
+    uint64_t processed_timestamp = 0;   // raw_timestamp / 200（微秒）
     bool     valid = false;
 };
 ```
 
-> **APX014 分支**：014 chunk（164,864B）的 `raw_timestamp` 为首子帧头 `u32@+4`（**原始 tick，单位未知**），`processed_timestamp` 恒为 `0` —— 单位换算（tick→µs）由 `MipiRaw8Decoder` 的自校准负责（见 codec 节）。014 时间轴为 u32，每 2³² tick 回绕一次（25MHz tick 下约 171.8s），消费方不得假设全局单调递增。
+> **仅适用于 apx003 RAW8 子帧流**。014（CF-NRS3 新格式）不再有子帧头时间戳提取——EVS 时间戳直接来自 40B 包头（`timestamp_sec×1e6+timestamp_usec`，µs）、APS 时间戳来自 80B 帧头（见 codec 节 `evs_packet_codec.h`）。
 
 ---
 
@@ -275,16 +275,9 @@ std::vector<Shimeta::EventCD> events;
 dec.Decode(frame.evs.data, frame.evs.size, events);
 ```
 
-### MIPI RAW8（apx003 / apx014 子帧流，双格式自动分派）
+### MIPI RAW8（apx003 子帧流）
 
-头文件：`<shimetapi/codec/mipi_raw8_codec.h>`。命名空间 `Shimeta::codec`。HVS RAW8 子帧流解码（clean-room，无第三方 SDK 依赖）。`MipiRaw8Decoder::Decode` 按 **chunk 长度**自动分派格式：APX003 chunk 为 32,768 整数倍字节，APX014 chunk 恒 164,864B（= 1 帧），二者天然无歧义。
-
-- **APX003 路径**：无状态解码，事件 `t = ts/200`（微秒，原语义），无需跨包复用。
-- **APX014 路径**：**内置时间戳自校准**——
-  - 前 `kSamples`（64）帧记录 (原始 tick, 主机单调钟) 并缓冲解码事件，此期间 `Decode` 可能返回 0 事件；
-  - `tick_hz = median(Δtick mod 2³²) × 实测帧率`；校准完成后**一次性补发**缓冲帧，其后逐帧换算 `t = (Δtick mod 2³²) × 10⁶ / tick_hz` 微秒；
-  - 校准重试语义：**仅**当 `tick_hz` 推算失败（median=0 或样本 <2 → `tick_hz ≤ 0`）时**重开一个采样窗**（最多两窗，连续两窗失败后**强制交付**，不再缓冲）；实测帧率 ∉ [60, 2000] 的异常**不重试**——立即按 `kFallbackFps`（600fps）回退并在本窗交付；
-  - `Decode` 非线程安全 —— 按流序单线程调用（与既有用法一致）。
+头文件：`<shimetapi/codec/mipi_raw8_codec.h>`。命名空间 `Shimeta::codec`。apx003 HVS RAW8 子帧流解码（clean-room，无第三方 SDK 依赖）。**无状态**：chunk 为 32,768 整数倍字节，事件 `t = ts/200`（微秒，原语义），无跨包复用；`Decode` 非线程安全——按流序单线程调用（与既有用法一致）。014 不再走本解码器（见下节 [EVS 014 包流](#evs-014-包流cf-nrs3-新格式)）。
 
 ```cpp
 struct MipiRaw8Layout {
@@ -299,74 +292,104 @@ struct MipiRaw8Layout {
     static constexpr uint32_t kHeaderMask   = 0x0000FFFFu;
 };
 
-// APX014 线上布局（2026-10 固件）：一帧 164,864B = 32 子帧 × 5,152B。
-struct MipiRaw014Layout {
-    static constexpr size_t kSubframeBytes = 5152;   // 24B 头 + 5120B 载荷 + 8B 尾
-    static constexpr int    kSubFrameNum   = 32;     // 2 横 × 16 纵
-    static constexpr int    kSubWidth      = 320;    // 每子帧 320×64 @2bit
-    static constexpr int    kSubHeight     = 64;
-    static constexpr int    kPackWidth     = 640;    // 打包事件网格
-    static constexpr int    kPackHeight    = 1024;
-    static constexpr int    kEvsWidth      = 1280;   // 插值后输出网格
-    static constexpr int    kEvsHeight     = 1024;
-    static constexpr size_t kFrameBytes    = 164864;
-    static constexpr uint32_t kHeaderMask  = 0x00FFFFFFu;
-    static constexpr uint32_t kMagic       = 0x0000FFFFu;
-    static constexpr size_t kApsFrameBytes = 983048;  // APS NV12 帧：640*1024*3/2 + 8B ts 尾
-};
-
 /// 传感器档位（USB 后端 Init 时按 APS 首帧长度探测）。
 enum class SensorModel { Apx003, Apx014 };
 
-constexpr bool isApx014Chunk(size_t len);          // len == 164,864 → true
 inline bool probeSensorByApsLen(size_t aps_transferred, SensorModel& out);
-// APS 首帧传输长度判档：700,424→Apx003；983,048→Apx014；未知长度返回 false。
-
-/// 解码一个 APX014 EVS 帧（164,864B）→ EventCD。纯函数、无跨帧状态。
-/// 事件 t 为【原始传感器 tick】（单位未知，换算由 MipiRaw8Decoder 的自校准负责）。
-/// 任一子帧魔数非法或 FrameNum 极差 >1 → 整帧丢弃（清空 out 返回 0）。
-/// frame_raw_ts 非空时回填帧时间戳（首子帧 +4 u32）。
-size_t DecodeApx014Frame(const uint8_t* data, size_t len, std::vector<EventCD>& out,
-                         uint32_t* frame_raw_ts = nullptr);
+// APS 首帧传输长度判档：700,424→Apx003（NV12+8B 尾）；655,440→Apx014
+//（CF-NRS3 新格式：80B 头 + Gray8 640×1024）；未知长度返回 false。
 
 class MipiRaw8Decoder {
 public:
     MipiRaw8Decoder() = default;
-    // 解码 data[0..len)，按 chunk 长度自动分派格式。
-    // subframe_count 仅对 003 生效：<=0 自动档按 len/kSubframeBytes 解全部子帧
-    //（各帧率档整包子帧数不同：120fps=16 … 1000fps=128）；显式传值只解前 N 个。
-    // 014 校准期本调用可能交付 0 事件（缓冲待补发）。
+    // 解码 data[0..len)：按 32,768B 子帧切分。
+    // subframe_count<=0 → 自动档（按 buffer 实际长度解全部子帧，适配任意帧率档：
+    // 各档整包子帧数不同，120fps=16 … 1000fps=128）；显式传值可只解前 N 个子帧。
     size_t Decode(const uint8_t* data, size_t len, std::vector<EventCD>& out,
                   int subframe_count = 0);
-    void   Reset();                  // 003 no-op；014 清空校准状态重新采样
-    bool   calibrated() const;       // 014 时间戳校准是否已完成
-    double tickHz() const;           // 014 校准出的 tick 频率（Hz；未校准为 0）
-
-    static constexpr int    kSamples     = 64;     // 校准采样窗（帧数）
-    static constexpr double kFallbackFps = 600.0;  // 校准异常回退帧率
 };
 ```
 
-> ⚠️ **014 时间轴回绕**：014 事件时间为 u32 原始 tick，每 2³² tick 回绕一次（25MHz tick 下约 171.8s）。解码器换算得到的 `t` 是相对校准基准的时间 —— 消费方不得假设跨长时间段全局单调递增；如需绝对时间请结合主机钟自行管理。
-> 014 事件坐标经插值映射到 1280×1024 输出网格（x<1280、y<1024）。
-
-> MIPI HVS 后端（`Backend::MipiHvs`）的 `Frame.evs` 为 RAW8 子帧流，需用 `MipiRaw8Decoder`（而非 `Evt2/Evt3Decoder`）解码。APX003 帧率档（`DeviceConfig.evs_fps`）与整包子帧数对应：120fps=16、240fps=32、300fps=40、500fps=64、750fps=100、1000fps=128；`Decode` 自动档按数据长度适配，无需手传。
+> MIPI HVS 后端（`Backend::MipiHvs`）的 `Frame.evs` 为 apx003 RAW8 子帧流，需用 `MipiRaw8Decoder`（而非 `Evt2/Evt3Decoder`）解码。APX003 帧率档（`DeviceConfig.evs_fps`）与整包子帧数对应：120fps=16、240fps=32、300fps=40、500fps=64、750fps=100、1000fps=128；`Decode` 自动档按数据长度适配，无需手传。
 
 ```cpp
-// 从 RAW8 子帧头提取传感器时间戳（自动分派）：
-//   APX003：45-bit ts / 200 → processed_timestamp（微秒）；
-//   APX014：raw = 首子帧 u32@+4，processed_timestamp = 0（单位换算归解码器自校准）。
+// 从 apx003 RAW8 子帧头提取传感器时间戳（45-bit / 200 → 微秒）。
+// 仅适用于 003 子帧流；014 时间戳在包头/帧头内（见下节）。
 Shimeta::EvsTimestamp extractEvsTimestamp(const uint8_t* data, size_t len);
-
-// u32 中位数（拷贝排序；空返回 0；偶数个取上中位）。
-uint32_t medianU32(std::vector<uint32_t> values);
-
-// 014 时间戳自校准（MipiRaw8Decoder 内部使用，亦可独立调用）：
-// tick_hz = median(模 2³² delta) × fps，fps = (N-1)/主机间隔秒；
-// median=0 或 fps∉[60,2000] 时按 fallback_fps 回退并告警；样本 <2 返回 0.0。
-double calibrateTickHz(const std::vector<std::pair<uint32_t, int64_t>>& ts_host_us_samples,
-                       double fallback_fps);
 ```
+
+### EVS 014 包流（CF-NRS3 新格式）
+
+头文件：`<shimetapi/codec/evs_packet_codec.h>`。命名空间 `Shimeta::codec`。014（CF-NRS3 固件）的 USB 数据格式：
+
+- **EVS 包流**：`[PacketHeader 40B][EVT2 payload]` 变长包，USB bulk 小端传输，尾短包 = 包界（bulk 读长恒为槽容量 `kEvsSlotCap` = 32,836B，容纳最大包 40 + 8192×4 + 4）；
+- **APS 帧流**：`[80B 头][Gray8 640×1024]`，定长 655,440B/帧。
+
+**包解析与校验**（`parseEvsPacket`）：校验 magic（"DVS1"）/ version / packet_type、长度与包界一致、CRC32（标准 zlib 反射 CRC32，连续覆盖"checksum 清零的 40B 头 + payload"，支持续算）；成功时输出 EVT2 负载指针（`payload_size` 可为 0——空帧包合法）。`evsPacketLooksLikeHeader` 只查 4 字节魔数，用于流重同步与 003/014 内容分派。
+
+```cpp
+struct EvsPacketHeader {           // packed 40B，主机/设备均小端，逐字节镜像设备端
+    uint32_t magic;                // "DVS1"（0x44565331）
+    uint8_t  version;              // = 1
+    uint8_t  packet_type;          // = 1（EVT2 数据）
+    uint16_t flags;
+    uint32_t sequence_num;         // @8
+    uint32_t device_id;
+    uint32_t timestamp_sec;        // 包时间戳（秒）
+    uint32_t timestamp_usec;       // 包时间戳（微秒）
+    uint32_t payload_size;         // @24，EVT2 负载字节数
+    uint32_t event_count;
+    uint32_t checksum;             // @32，CRC32（checksum 清零参与）
+    uint32_t reserved;             // @36，设备端填 EVS 帧号 fn（聚帧分组键）
+};
+
+bool parseEvsPacket(const uint8_t* buf, size_t len, EvsPacketHeader& h,
+                    const uint8_t** payload = nullptr);
+bool evsPacketLooksLikeHeader(const uint8_t* p);   // 4B 魔数快速探测
+uint32_t evsPacketCrc32(const uint8_t* d, size_t n);
+uint32_t evsPacketCrc32Cont(uint32_t seed, const uint8_t* d, size_t n);  // CRC 续算
+```
+
+**聚帧解码器 `Evs014PacketDecoder`**（状态化，单线程使用）：按包头 `reserved@36`（设备端 EVS 帧号 fn）**按帧号聚合**——同 fn 包的事件累计，fn 变化时把上一帧全部事件一次性输出（设备端同帧包连续发送，不跨帧交错）。**时间戳已是微秒、无自校准环节**：事件 `t = timestamp_sec × 1e6 + timestamp_usec`（同帧各包同 ts）。EVT2 词解码内联（复用 `evt2_codec.h` 的词布局）：CD_ON/CD_OFF 词产出事件，TIME_HIGH/EXT_TRIGGER 词跳过。空帧包（`payload_size=0`）合法，fn 变化时仍输出；坏包（parse 失败）不改内部状态。
+
+```cpp
+class Evs014PacketDecoder {
+public:
+    // 喂入一包：返回本次输出到 out 的事件数（= 帧号变化时冲刷的上一帧事件数；
+    // 同帧累计 / 坏包返回 0）。
+    size_t Decode(const uint8_t* pkt, size_t len, std::vector<EventCD>& out);
+    size_t Flush(std::vector<EventCD>& out);  // 冲刷当前累计帧（流收尾用）
+    void   Reset();                           // 重置聚帧状态
+    uint32_t currentFrameNum() const;         // 当前帧号（= 最近包的 reserved；无帧时 0）
+    bool     hasCurrentFrame() const;         // 是否有累计中的帧
+};
+```
+
+**典型用法**（USB 回调解码 `Frame.evs`，节选自 `samples/cpp/ts_sync`）：
+
+```cpp
+Shimeta::codec::Evs014PacketDecoder dec;   // 跨包有状态：回调线程内单实例持有
+std::vector<Shimeta::EventCD> events;
+dec.Decode(frame.evs.data, frame.evs.size, events);   // 帧号变化时输出上一帧事件
+```
+
+**APS 帧头解析**（`parseAps014Header`）：80B 头五重防呆（magic 0xCF14 / CRC16-CCITT 覆盖前 70B / format / hdr_version / payload_len），外加宽高与载荷几何自洽（Gray8：W×H == payload_len）；`Aps014FrameMeta` 回填曝光/增益/几何/温度等元数据，`ts_sec/ts_usec` 为帧起始墙钟。
+
+```cpp
+struct Aps014FrameMeta {
+    uint32_t ts_sec = 0, ts_usec = 0;        // 帧起始墙钟（秒/微秒）
+    uint64_t t_trigger = 0;                  // 外触发时刻（µs）
+    uint32_t exposure_us = 0;                // 曝光时间（µs）
+    // …增益 / 灰度统计 / gamma / 帧计数 / 外触发计数 / 几何 / 温度 / 状态位 略
+    bool     valid = false;                  // 五重防呆 + 几何自洽全通过
+};
+
+bool parseAps014Header(const uint8_t* buf, Aps014FrameMeta& meta,
+                       uint32_t expect_payload_len = 655360,   // Gray8 640×1024
+                       uint8_t  expect_format      = 0);       // Gray8
+```
+
+> 014 事件坐标即设备画布原生坐标（640×1024，x<640、y<1024），无插值。
 
 ---
 
@@ -408,7 +431,7 @@ public:
 
 ### `Shimeta::io::HybridWriter`（`io/hybrid_writer.h`）
 
-混合录制门面：EVS 存为 RAW 事件文件（复用 `EventWriter`），APS（packed NV12）存为 AVI（含 tsmp 时间戳 chunk）。与读侧 `HybridReader` 对称。`EvsTimestamp` 定义见 [core 节](#shimetavstimestamp-core-timestamph)。
+混合录制：EVS 原始字节写入 RAW，APS 写入 AVI（APX003 为 NV12，APX014 为 Gray8）。`aps_format` 默认 NV12，录制 APX014 时传 `PixelFormat::Gray8`。
 
 ```cpp
 class HybridWriter {
@@ -417,13 +440,13 @@ public:
     // 打开 EVS/APS 两路输出（单尺寸：EVS 与 APS 同几何）；aps_fps 仅写入 AVI 头，不控制采集。
     bool open(const std::string& evs_path, const std::string& aps_path,
               uint32_t width, uint32_t height, RawFormat evs_format = RawFormat::Evt3,
-              double aps_fps = 30.0);
-    // 双尺寸版：EVS 头写 evs_w×evs_h、AVI 写 aps_w×aps_h——APX014 两路几何不同
-    //（EVS 1280×1024 / APS 640×1024）时用此重载；旧 4 参版本等价于 evs=aps 同尺寸。
+              double aps_fps = 30.0, PixelFormat aps_format = PixelFormat::NV12);
+    // 双尺寸版：EVS 头写 evs_w×evs_h、AVI 写 aps_w×aps_h——两路几何不同时用此重载；
+    // 旧 4 参版本等价于 evs=aps 同尺寸。014 新格式 EVS 头几何为 640×1024（设备画布）。
     bool open(const std::string& evs_path, const std::string& aps_path,
               uint32_t evs_w, uint32_t evs_h, uint32_t aps_w, uint32_t aps_h,
-              RawFormat evs_format = RawFormat::Evt3, double aps_fps = 30.0);
-    // 写一帧：EVS 走 writeRaw，APS(NV12) 写入 AVI；evs_ts 可选注入 tsmp。
+              RawFormat evs_format = RawFormat::Evt3, double aps_fps = 30.0, PixelFormat aps_format = PixelFormat::NV12);
+    // 写一帧：EVS 走 writeRaw，APS(NV12/Gray8) 写入 AVI；evs_ts 可选注入 tsmp。
     bool writeFrame(const Shimeta::Frame& frame, const Shimeta::EvsTimestamp* evs_ts = nullptr);
     void close();
     uint32_t apsFrameCount() const;     // 已写入的 APS 帧数
@@ -432,7 +455,7 @@ public:
 
 ### `Shimeta::io::HybridReader`（`io/hybrid_reader.h`）
 
-`HybridWriter` 的读取对偶 —— 读取其产出的混合录像（EVS raw + APS NV12 AVI，含 tsmp chunk）。与 `Camera` 一样返回原始字节（APS 为 NV12、EVS 为原始包），应用自行 `cvtColor` / codec 解码。
+`HybridWriter` 的读取对偶 —— 读取其产出的混合录像（EVS raw + APS NV12/Gray8 AVI，含 tsmp chunk）。与 `Camera` 一样返回原始字节（APS 为 NV12/Gray8、EVS 为原始包），应用自行 `cvtColor` / codec 解码。
 
 ```cpp
 class HybridReader {
@@ -447,10 +470,16 @@ public:
     uint32_t height() const;         // APS 高
     double   apsFps() const;         // AVI 头帧率（无效回退 30.0）
     uint32_t apsFrameCount() const;
+    PixelFormat apsFormat() const;  // NV12 (APX003) / Gray8 (APX014)
 
-    // 顺序读下一帧 APS（NV12 原始字节）。
+    // 顺序读下一帧 APS（NV12/Gray8 原始字节）。
     bool readApsFrame(Shimeta::Frame& out, Shimeta::EvsTimestamp* evs_ts = nullptr);
-    // 顺序读下一包 EVS 原始字节（已跳过 EVT3 文本头）。packet_bytes=0 默认 1 MiB。
+    // 顺序读下一包 EVS 原始字节（已跳过 EVT3 文本头）。packet_bytes=0 按 EVT3 头几何自适应：
+    //   - 640×1024（新 014）→ DVS1 变长包流逐包切读：每次恰返回一个完整包
+    //     （40B 包头 + 包内 payload_size 字节，跨读残余缓冲拼接）；
+    //   - 1280×1024（旧 014 录像）→ 固定 164,864B/包（恰好一帧）；
+    //   - 其余（003）→ 1 MiB。
+    // 显式 packet_bytes 优先于自适应（原始定长读，API 兼容）。
     bool readEvsPacket(Shimeta::Frame& out, size_t packet_bytes = 0);
 };
 ```
@@ -459,7 +488,7 @@ public:
 
 ## Python 绑定（hv_toolkit）
 
-单一 `hv_toolkit` 模块（pybind11），**同一套 API 支持 USB（x86_64）与 MIPI HVS（S100/RK3588）**。方法名转 snake_case，`Frame.evs`/`aps` 为零拷贝 numpy `uint8` 视图，decoder 返回 numpy 结构数组（字段 `x`/`y`/`t`/`polarity`）。
+单一 `hv_toolkit` 模块（pybind11）；本发布包提供 **x86_64 / Python 3.10** 预编译模块。方法名转 snake_case，`Frame.evs`/`aps` 为零拷贝 numpy `uint8` 视图，decoder 返回 numpy 结构数组（字段 `x`/`y`/`t`/`polarity`）。
 
 ### 导出表面
 
@@ -487,11 +516,9 @@ cfg.vendor_id  = 0x1d6b
 cfg.product_id = 0x0105
 
 cam = hv.Camera(); cam.init(cfg); cam.start_stream()
-dec = hv.Evt2Decoder()
 f = hv.Frame()
 while cam.get_frame(f, 1000):
-    ev = dec.decode(bytes(f.evs))      # → ndarray[(x,y,t,polarity)]
-    print(len(ev), "events, aps", f.aps.nbytes, "bytes")
+    print("raw EVS", f.evs.nbytes, "bytes, APS", f.aps.nbytes, "bytes")
 cam.stop_stream(); cam.destroy()
 ```
 
@@ -510,18 +537,16 @@ dec = hv.MipiRaw8Decoder()
 
 ### 构建与部署
 
+本发布仓库不编译 SDK 或 Python 绑定源码。随包提供 x86_64 / Python 3.10 预编译模块：
+
 ```bash
-./run.sh --python build x86_64     # USB；产物 build/hv_toolkit.<abi>.so
-./run.sh --python build s100       # MIPI HVS（aarch64）；产物 out/s100/build/hv_toolkit.<abi>.so
+export LD_LIBRARY_PATH="$PWD/lib/x86_64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PYTHONPATH="$PWD/lib/x86_64/python${PYTHONPATH:+:$PYTHONPATH}"
+python3 -c "import hv_toolkit; print(hv_toolkit.__version__)"
 ```
 
-- x86：用 host python，`import hv_toolkit` 即可。
-- S100/RK3588：交叉编译需目标架构 `Python.h`，构建系统按序在 `PYTHON_TARGET_ROOT`/`S100_SYSROOT`/`RDK_SYSROOT`/`/usr/aarch64-linux-gnu` 及仓库自带 `legacy/rdk_sysroot`（aarch64 python3.10 头）下查找，通常免配置即可编出 `hv_toolkit.cpython-310-aarch64-linux-gnu.so`；板卡运行需 `LD_LIBRARY_PATH` 指向 `libshimetapi_*.so` 目录。详见 [README.md](README.md)「Python 示例」。
-
-> 未导出（后续按需补）：回调（`SetFrameCallback`/`SetEventCallback`/`SetImageCallback`）、`EventReader`/`EventWriter`、`HybridReader`/`HybridWriter`。
-
----
+APX014 的 Python 采集返回原始 DVS1 包；不能直接交给 `Evt2Decoder` 或 `MipiRaw8Decoder` 解码整包。`Evs014PacketDecoder`、回调与 IO 类尚未导出 Python；请参考 C++ 示例。ARM Python 模块不在本发布包中。
 
 ## 许可证
 
-Apache License 2.0。EVT2/EVT3 编解码为基于公开规范的独立实现（clean-room），不含第三方闭源源码。
+核心运行库按二进制发布条款交付，见 [README.md](README.md) 的版权声明。头文件中的许可标注不授予闭源二进制组件额外权限。

@@ -8,6 +8,7 @@
 #include <cstring>
 #include <thread>
 #include <vector>
+#include <shimetapi/codec/evs_packet_codec.h>
 #include <shimetapi/codec/mipi_raw8_codec.h>
 #include <shimetapi/hv/camera.h>
 #include <shimetapi/hv/device_config.h>
@@ -15,16 +16,25 @@
 using Clock = std::chrono::steady_clock;
 
 /// 收流 seconds 秒并解码，返回事件总数（教学点：帧率档变化直接反映在事件密度上）。
+/// 按 chunk 内容分派（同 bench_hw）：≥40B 且头带 "DVS1" 魔数 → 014 变长包，走
+/// Evs014PacketDecoder（有状态：跨包累计同帧事件，实例须在循环外持有，收尾 Flush
+/// 冲刷最后半拍）；否则 003 RAW8 子帧 → MipiRaw8Decoder（无状态）。
 static uint64_t countEvents(Shimeta::hv::Camera& cam, Shimeta::codec::MipiRaw8Decoder& dec, int seconds) {
     uint64_t total = 0;
+    Shimeta::codec::Evs014PacketDecoder dec014; // 014 变长包聚帧（有状态：跨包累计同帧事件）
     std::vector<Shimeta::EventCD> ev;
     auto t0 = Clock::now();
     while (std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - t0).count() < seconds) {
         Shimeta::Frame f;
         if (!cam.GetFrame(f, 1000)) continue;
         ev.clear();
-        total += dec.Decode(f.evs.data, f.evs.size, ev);
+        if (f.evs.size >= Shimeta::codec::kEvsHdrLen && Shimeta::codec::evsPacketLooksLikeHeader(f.evs.data))
+            total += dec014.Decode(f.evs.data, f.evs.size, ev);
+        else
+            total += dec.Decode(f.evs.data, f.evs.size, ev);
     }
+    ev.clear();
+    total += dec014.Flush(ev); // 014 聚帧尾：冲刷累计中的最后一帧
     return total;
 }
 

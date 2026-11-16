@@ -1,10 +1,12 @@
 // viewer: 取每帧事件字节并解码、计数。
-// USB 与 MIPI 后端的 EVS 端点均为 RAW8 子帧流（003 chunk / 014 整帧，长度自动分派），
-// 统一用 MipiRaw8Decoder 解码（与 bench_hw 一致；USB EP2 并非 EVT2）。
+// MIPI 后端的 EVS 端点为 RAW8 子帧流（003）→ MipiRaw8Decoder；USB 后端按 chunk
+// 内容分派（与 bench_hw 一致）：014 新格式变长包（40B 头 "DVS1" 魔数，载荷 EVT2）
+// → Evs014PacketDecoder，003 RAW8 子帧 → MipiRaw8Decoder。
 // --sensor-index N 覆盖默认 sensor 索引（S100 默认 9；X5 同配置在 49）。
 #include <shimetapi/hv/camera.h>
 #include <shimetapi/hv/device_config.h>
-#include <shimetapi/codec/mipi_raw8_codec.h> // USB EP2 / MIPI s100 均为 RAW8
+#include <shimetapi/codec/evs_packet_codec.h>  // 014 变长包（"DVS1"）
+#include <shimetapi/codec/mipi_raw8_codec.h>   // 003 RAW8 子帧
 #include <vector>
 #include <cstdio>
 #include <cstdlib>
@@ -41,13 +43,14 @@ int main(int argc, char** argv) {
         return 0;
     }
     long total = 0;
-    // USB 路径：解码器提到循环外复用——014 时间戳自校准需跨帧保状态，
-    // 每轮新建会导致校准窗（64 帧）永远填不满、恒交付 0 事件。
+    // USB 路径：解码器提到循环外复用——014 包聚帧是跨包有状态（同帧累计、
+    // 帧号变化才冲刷上一帧），每轮新建会永远等不到冲刷、恒交付 0 事件。
+    // 003 MipiRaw8Decoder 无状态，提到外面同样正确。
     // --mipi 路径保持每轮新建（003 无状态，沿用原样）。
     Shimeta::codec::MipiRaw8Decoder usb_dec;
-    // 014 需先攒满 64 帧校准窗才开始交付事件（校准期 Decode 返回 0 事件），
-    // 10 次取帧对 014 恒为 0 事件——扩到 200 帧（600fps 下约 0.33s）覆盖
-    // 校准窗 + 输出段；003 无校准、行为不变（多帧只是多解码）。
+    Shimeta::codec::Evs014PacketDecoder dec014;
+    // 取 200 帧：014 聚帧在帧号变化时输出（最多 1 帧延迟），200 帧足够覆盖
+    // 输出段；003 无聚合、行为不变（多帧只是多解码）。
     for (int i = 0; i < 200; ++i) {
         Shimeta::Frame f;
         if (cam.GetFrame(f, 1000) && f.evs.size > 0) {
@@ -55,11 +58,21 @@ int main(int argc, char** argv) {
             if (use_mipi) {
                 Shimeta::codec::MipiRaw8Decoder dec;
                 dec.Decode(f.evs.data, f.evs.size, evs);
+            } else if (f.evs.size >= Shimeta::codec::kEvsHdrLen &&
+                       Shimeta::codec::evsPacketLooksLikeHeader(f.evs.data)) {
+                // 014 新格式变长包（≥40B 且 "DVS1" 魔数）
+                dec014.Decode(f.evs.data, f.evs.size, evs);
             } else {
                 usb_dec.Decode(f.evs.data, f.evs.size, evs);
             }
             total += long(evs.size());
         }
+    }
+    // 014 聚帧尾冲刷：流结束输出最后一帧累计事件（003 无状态，Flush 恒 0）
+    {
+        std::vector<Shimeta::EventCD> evs;
+        dec014.Flush(evs);
+        total += long(evs.size());
     }
     cam.StopStream();
     cam.Destroy();

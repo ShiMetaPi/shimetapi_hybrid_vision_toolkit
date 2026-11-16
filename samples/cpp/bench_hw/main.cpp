@@ -1,7 +1,9 @@
 // bench_hw: timed real-HW USB bench.
 //   ./hv_sample_bench_hw [vid] [pid] [duration_s]    (default 0x1d6b 0x0105 5)
-// Opens the USB camera (vid:pid), streams for <duration_s> seconds, decodes raw-subframe
-// events (MipiRaw8Decoder, 003/014 auto) and counts APS frames, then prints Mev/s + APS fps.
+// Opens the USB camera (vid:pid), streams for <duration_s> seconds, decodes events
+// (by chunk content: 014 new-format variable packet "DVS1" -> Evs014PacketDecoder;
+// otherwise 003 RAW8 subframe -> MipiRaw8Decoder) and counts APS frames,
+// then prints Mev/s + APS fps.
 // Needs the camera online + permissions (sudo or the udev rule from the README).
 #include <chrono>
 #include <cstdint>
@@ -10,6 +12,7 @@
 #include <vector>
 
 #include <shimetapi/core/event_cd.h>
+#include <shimetapi/codec/evs_packet_codec.h>
 #include <shimetapi/codec/mipi_raw8_codec.h>
 #include <shimetapi/hv/camera.h>
 #include <shimetapi/hv/device_config.h>
@@ -43,7 +46,8 @@ int main(int argc, char** argv) {
 
     uint64_t total_ev = 0;
     int frames = 0, aps_frames = 0;
-    codec::MipiRaw8Decoder dec;
+    codec::MipiRaw8Decoder dec;        // 003 RAW8 子帧（无状态）
+    codec::Evs014PacketDecoder dec014; // 014 变长包聚帧（有状态：跨包累计同帧事件）
     std::vector<EventCD> out;
     auto t0 = Clock::now();
     while (true) {
@@ -53,10 +57,18 @@ int main(int argc, char** argv) {
         ++frames;
         if (f.evs.size > 0) {
             out.clear();
-            total_ev += dec.Decode(f.evs.data, f.evs.size, out);
+            // 按 chunk 内容分派：≥40B 且 40B 头 "DVS1" 魔数 → 014 变长包；
+            // 否则 003 RAW8 子帧流（32,768 倍数）。同型号全流一致，首帧即定档。
+            if (f.evs.size >= codec::kEvsHdrLen && codec::evsPacketLooksLikeHeader(f.evs.data))
+                total_ev += dec014.Decode(f.evs.data, f.evs.size, out);
+            else
+                total_ev += dec.Decode(f.evs.data, f.evs.size, out);
         }
         if (f.aps.size > 0) ++aps_frames;
     }
+    // 014 聚帧尾：流结束时冲刷最后一帧累计事件（帧号变化才输出的那半拍）
+    out.clear();
+    total_ev += dec014.Flush(out);
     auto t1 = Clock::now();
     cam.StopStream();
     cam.Destroy();

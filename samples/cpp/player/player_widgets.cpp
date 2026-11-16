@@ -5,6 +5,7 @@
  */
 #include "player_widgets.h"
 
+#include <shimetapi/codec/evs_packet_codec.h>
 #include <shimetapi/codec/mipi_raw8_codec.h>
 #include <shimetapi/io/event_reader.h>
 
@@ -40,7 +41,7 @@ bool VideoReader::open(const std::string& path, double fallback_fps) {
 double VideoReader::fps() const { return fps_ > 0.0 ? fps_ : fallback_fps_; }
 uint64_t VideoReader::totalFrameCount() const { return total_frames_; }
 
-/** @brief 顺序读到目标索引，NV12 原始字节 → BGR（工具包零 OpenCV 依赖）。 */
+/** @brief 顺序读到目标索引，原始字节按格式转 BGR（NV12 双平面 / Gray8 单平面）。 */
 bool VideoReader::readFrameAt(uint64_t target_index, cv::Mat& frame, Shimeta::EvsTimestamp* timestamp) {
     if (target_index < current_index_) return false;
     while (current_index_ <= target_index) {
@@ -48,9 +49,16 @@ bool VideoReader::readFrameAt(uint64_t target_index, cv::Mat& frame, Shimeta::Ev
         Shimeta::EvsTimestamp ts;
         if (!reader_->readApsFrame(f, &ts)) return false;
         uint8_t* base = const_cast<uint8_t*>(f.aps.data);
-        cv::Mat y(f.height, f.width, CV_8UC1, base);
-        cv::Mat uv(f.height / 2, f.width / 2, CV_8UC2, base + size_t(f.width) * f.height);
-        cv::cvtColorTwoPlane(y, uv, current_frame_, cv::COLOR_YUV2BGR_NV12);
+        if (f.format == Shimeta::PixelFormat::Gray8) {
+            // 014：Gray8 单平面 → BGR
+            cv::Mat gray(f.height, f.width, CV_8UC1, base);
+            cv::cvtColor(gray, current_frame_, cv::COLOR_GRAY2BGR);
+        } else {
+            // 003：NV12 双平面（Y + 交叠 UV）→ BGR
+            cv::Mat y(f.height, f.width, CV_8UC1, base);
+            cv::Mat uv(f.height / 2, f.width / 2, CV_8UC2, base + size_t(f.width) * f.height);
+            cv::cvtColorTwoPlane(y, uv, current_frame_, cv::COLOR_YUV2BGR_NV12);
+        }
         current_timestamp_ = ts;
         ++current_index_;
     }
@@ -123,7 +131,11 @@ size_t ApsFrameCache::cachedFrameCount() const { return frames_.size(); }
 // ============================================================================
 // EvsFrameSequence
 // ============================================================================
-/** @brief 用公有 HybridReader 读 EVS 原始字节，MipiRaw8 逐包解码，每 4 子帧合成 1 极性帧。 */
+/** @brief 用公有 HybridReader 读 EVS 原始字节，按 RAW 头几何分派解码器：
+ *  768×608=003 → MipiRaw8Decoder（每 4 子帧合成 1 极性帧）；
+ *  640×1024=014 新格式 → Evs014PacketDecoder（HybridReader 已按包头逐包切好，
+ *  解码器跨包聚帧、流尾 Flush 冲刷末帧）；
+ *  1280×1024=旧 014 子帧布局 → 解码路径已退役，告警退出。 */
 bool EvsFrameSequence::open(const std::string& filename) {
     Shimeta::io::HybridReader reader;
     if (!reader.open(filename, "")) {
@@ -131,7 +143,7 @@ bool EvsFrameSequence::open(const std::string& filename) {
         return false;
     }
     // EVS 几何优先取 RAW 头（工具包 EventWriter 产物恒携带 width/height：
-    // 003=768×608、014=1280×1024——014 半场事件曾被 768×608 硬编码静默裁掉）。
+    // 003=768×608、014 新格式=640×1024——014 半场事件曾被 768×608 硬编码静默裁掉）。
     // 头缺失/非法（hasHeaderSize()=false，如外部无头文件）时回退 003 几何并告警。
     width_ = 768;
     height_ = 608;
@@ -146,17 +158,36 @@ bool EvsFrameSequence::open(const std::string& filename) {
         }
     }
 
-    Shimeta::codec::MipiRaw8Decoder decoder;
+    if (width_ == 1280 && height_ == 1024) {
+        // 旧 014 子帧录制：子帧布局/解码/校准已在 codec 层退役（Task 3），现录制
+        // 均为 640×1024 DVS1 包流——明确拒绝而非静默错解。
+        std::cerr << "旧 014 子帧录制（1280x1024）不受支持：解码路径已退役，"
+                     "请用 CF-NRS3 新固件重新录制" << std::endl;
+        return false;
+    }
+    const bool is014 = (width_ == 640 && height_ == 1024);
+
+    Shimeta::codec::MipiRaw8Decoder dec003;      // 003：无状态逐包解码
+    Shimeta::codec::Evs014PacketDecoder dec014;  // 014：跨包聚帧有状态，循环外持有
     std::vector<Shimeta::EventCD> all_events;
     int packet_count = 0;
     size_t total_bytes = 0;
     Shimeta::Frame f;
     while (reader.readEvsPacket(f)) {
         std::vector<Shimeta::EventCD> packet_events;
-        decoder.Decode(f.evs.data, f.evs.size, packet_events);
+        if (is014)
+            dec014.Decode(f.evs.data, f.evs.size, packet_events); // 帧号变化时冲刷上一帧
+        else
+            dec003.Decode(f.evs.data, f.evs.size, packet_events);
         all_events.insert(all_events.end(), packet_events.begin(), packet_events.end());
         total_bytes += f.evs.size;
         ++packet_count;
+    }
+    if (is014) {
+        // 聚帧尾冲刷：输出最后一帧累计事件（不冲刷会丢尾帧）
+        std::vector<Shimeta::EventCD> tail;
+        dec014.Flush(tail);
+        all_events.insert(all_events.end(), tail.begin(), tail.end());
     }
     std::cout << "RAW8 data size: " << total_bytes << " bytes" << std::endl;
     std::cout << "Decoded " << packet_count << " packets, "
@@ -168,8 +199,8 @@ bool EvsFrameSequence::open(const std::string& filename) {
     }
 
     // 按时间窗口累积为极性帧：003 几何（768×608）保留「4 个唯一时间戳 = 1 EVS 帧」
-    // 启发式（003 行为不变）；其它几何（014=1280×1024，逐子帧独立时间戳，每帧 32 个）
-    // 无该 4 子帧结构——直接每个唯一时间戳组一帧（播放粒度=子帧，最小改动）。
+    // 启发式（003 行为不变）；014 新格式（640×1024）聚帧后每帧单时间戳——直接
+    // 每个唯一时间戳组一帧。
     const uint64_t subframes_per_frame =
         (width_ == 768 && height_ == 608) ? kEvsSubframesPerFrame : 1;
     frames_.clear();
@@ -735,10 +766,11 @@ void printGuiStartupError(const cv::Exception& e) {
 
 /** @brief 打印命令行用法。 */
 void printUsage(const char* prog) {
-    std::cerr << "Usage: " << prog << " <events.raw> <video.avi> [fps] [speed]\n"
+    std::cerr << "Usage: " << prog << " <events.raw> [video.avi] [fps] [speed]\n"
               << "       " << prog << " <events.raw> <video.avi> --dump-timestamps\n"
-              << "  events.raw : EVS 录制文件（toolkit EventReader 格式）\n"
-              << "  video.avi  : APS AVI 录制文件（含 tsmp chunk）\n"
+              << "  events.raw : EVS 录制文件（003 RAW8 子帧或 014 DVS1 包流，按头几何分派）\n"
+              << "  video.avi  : APS AVI 录制文件（含 tsmp chunk；NV12=003 / Gray8=014，\n"
+              << "               按格式自动转 BGR）；缺省 = EVS 单轨回放\n"
               << "  fps        : AVI 帧率回退值（默认 30）\n"
               << "  speed      : 播放速度（默认 1.0）\n"
               << "  --dump-timestamps : CSV 输出所有 EVS RAW8 与 APS tsmp 时间戳后退出\n";

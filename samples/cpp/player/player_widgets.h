@@ -65,8 +65,8 @@ extern std::atomic<int>      g_pending_action; ///< 待处理动作（鼠标命�
 /**
  * @brief APS 视频顺序读取器。
  *
- * 基于公有 HybridReader 读 AVI（NV12+tsmp），应用层做 NV12→BGR，
- * 并提供「顺序读到目标索引」的按帧访问。
+ * 基于公有 HybridReader 读 AVI（NV12=003 / Gray8=014 + tsmp），应用层按帧
+ * format 转 BGR（NV12 双平面 / Gray8 单平面），并提供「顺序读到目标索引」的按帧访问。
  */
 class VideoReader {
 public:
@@ -109,7 +109,8 @@ private:
 /**
  * @brief EVS 帧序列。
  *
- * 一次性读全 + 解码（MipiRaw8）+ 每 4 子帧合成 1 极性帧，
+ * 一次性读全 + 按头几何分派解码（003=768×608 → MipiRaw8 每 4 子帧合成 1 极性帧；
+ * 014 新格式=640×1024 → Evs014PacketDecoder 聚帧，每帧单时间戳），
  * 提供按帧索引访问、时间戳查找、着色渲染。
  */
 class EvsFrameSequence {
