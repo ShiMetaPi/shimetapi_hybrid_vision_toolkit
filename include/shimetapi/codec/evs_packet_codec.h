@@ -68,6 +68,11 @@ uint32_t evsPacketCrc32Cont(uint32_t seed, const uint8_t* d, size_t n);
 bool parseEvsPacket(const uint8_t* buf, size_t len, EvsPacketHeader& h,
                     const uint8_t** payload = nullptr);
 
+/// @brief Read a packet's total size from at least kEvsHdrLen header bytes.
+/// Returns 0 for incomplete/invalid headers, oversized or unaligned payloads.
+/// This is framing only: call parseEvsPacket on the complete packet to check CRC.
+size_t evsPacketSize(const uint8_t* header, size_t available);
+
 /// @brief 快速探测（重同步扫 magic / 003 vs 014 分派用，只查 4 字节魔数）。
 bool evsPacketLooksLikeHeader(const uint8_t* p);
 

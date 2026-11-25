@@ -1,3 +1,25 @@
+# 2026-11-25 openEuler ARM64 USB prebuilt release
+
+- Adds `lib/openEuler/` with four stripped ARM64 SDK shared libraries; no internal
+  implementation source, tests, Mock bench, build cache or private diagnostics data.
+- Adds explicit `openEuler` platform selection, cross toolchain, sample-only builds
+  in `build_release_openEuler/`, and automatic runtime library bundling.
+- Adds `record_openEuler` with APS initialization discard and recording deadline;
+  adds host `recording_player` supporting current APX014 DVS1/EVT2, Gray8/NV12 AVI
+  and the three-column APS timestamp sidecar.
+- Adds the public declaration of optional `HybridWriter::setApsPlaybackDuration`.
+  This method is implemented only in the newly supplied openEuler libraries;
+  previously published x86_64/S100/X5 libraries and Python module are unchanged.
+- openEuler USB libraries include aligned EVS receive capacity and skip the unused
+  VPF bridge wait. No camera firmware changes. No MIPI support in this platform.
+- openEuler excludes fps_control; GUI samples are disabled by default. The host
+  recording_player is skipped for cross-compilation.
+- RAW is stored as complete packets, APS as complete frames. A host recording
+  window is not exact per-event sensor-time clipping or hardware synchronization.
+
+Public samples are supplied as source; SDK implementation remains binary-only.
+Libraries are stripped but retain dynamic API symbols. See SHA256SUMS for hashes.
+
 # 2026-11-16 APX014 USB 协议更新 / APX014 USB protocol update
 
 内部源码基线 / Internal source baseline: `471e3663`.

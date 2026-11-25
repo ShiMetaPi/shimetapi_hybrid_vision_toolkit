@@ -11,10 +11,10 @@ include(GNUInstallDirs)
 # x86_64: USB + Ethernet 后端；s100/x5(aarch64): MIPI + Ethernet 后端。
 # HV_TOOLKIT_ARCH 可显式覆盖（如交叉编译时指定 s100 或 x5）；缺省按 CMAKE_SYSTEM_PROCESSOR 推断。
 # aarch64 默认推断为 s100；X5 用户需显式 -DHV_TOOLKIT_ARCH=x5（避免默认与 S100 冲突）。
-set(HV_TOOLKIT_ARCH "" CACHE STRING "Prebuilt arch override: x86_64, s100, or x5")
+set(HV_TOOLKIT_ARCH "" CACHE STRING "Prebuilt arch override: x86_64, s100, x5, or openEuler")
 if(HV_TOOLKIT_ARCH)
-    if(NOT HV_TOOLKIT_ARCH MATCHES "^(x86_64|s100|x5)$")
-        message(FATAL_ERROR "Invalid HV_TOOLKIT_ARCH='${HV_TOOLKIT_ARCH}' (expected x86_64, s100, or x5)")
+    if(NOT HV_TOOLKIT_ARCH MATCHES "^(x86_64|s100|x5|openEuler)$")
+        message(FATAL_ERROR "Invalid HV_TOOLKIT_ARCH='${HV_TOOLKIT_ARCH}' (expected x86_64, s100, x5, or openEuler)")
     endif()
     set(HV_TOOLKIT_ARCH_DIR "${HV_TOOLKIT_ARCH}")
 elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "x86_64|amd64|AMD64")
@@ -23,6 +23,22 @@ elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "aarch64|arm64")
     set(HV_TOOLKIT_ARCH_DIR "s100")
 else()
     message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR} (prebuilt libs: x86_64, s100/aarch64, x5/aarch64; or set HV_TOOLKIT_ARCH)")
+endif()
+
+# openEuler is an explicit ARM64 USB platform, never inferred from generic ARM64.
+if(HV_TOOLKIT_ARCH_DIR STREQUAL "openEuler")
+    set(OPENEULER_PLATFORM ON)
+    execute_process(COMMAND "${CMAKE_CXX_COMPILER}" -dumpmachine
+        OUTPUT_VARIABLE _compiler_target OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE _compiler_result)
+    if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$" OR
+       NOT _compiler_result EQUAL 0 OR NOT _compiler_target MATCHES "^(aarch64|arm64)")
+        message(FATAL_ERROR "openEuler requires an ARM64 compiler; use toolchains/openEuler/toolchain.cmake")
+    endif()
+    option(BUILD_GUI_SAMPLES "Build OpenCV desktop samples" OFF)
+else()
+    set(OPENEULER_PLATFORM OFF)
+    option(BUILD_GUI_SAMPLES "Build OpenCV desktop samples" ON)
 endif()
 
 set(HV_TOOLKIT_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/${HV_TOOLKIT_ARCH_DIR}" CACHE PATH "Prebuilt library directory")
@@ -59,6 +75,13 @@ set_target_properties(shimetapi_io PROPERTIES
     INTERFACE_LINK_LIBRARIES "HVToolkit::shimetapi_core;HVToolkit::shimetapi_codec")
 set_target_properties(shimetapi_hv PROPERTIES
     INTERFACE_LINK_LIBRARIES "HVToolkit::shimetapi_core;HVToolkit::shimetapi_codec")
+
+if(OPENEULER_PLATFORM)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBUSB REQUIRED IMPORTED_TARGET libusb-1.0)
+    set_property(TARGET shimetapi_hv APPEND PROPERTY
+        INTERFACE_LINK_LIBRARIES PkgConfig::LIBUSB)
+endif()
 
 # 运行时 rpath 指向预编译库目录，样例免设 LD_LIBRARY_PATH（install 后由系统 ldconfig / rpath 解析）
 foreach(_comp core codec io hv)
@@ -117,7 +140,7 @@ add_custom_target(bundle_libs
 # bundle_libs 已覆盖三个架构共用的复制 + 三层符号链（x5 同 s100 的 hvs 依赖）。
 # 样例构建后自动捆绑（样例链接的 IMPORTED 库在 lib/，运行时才需要 build/ 里的拷贝）
 if(BUILD_SAMPLES)
-    foreach(_sample get_started callback record viewer bench_hw live_record_display player fps_control ts_sync)
+    foreach(_sample get_started callback record record_openEuler viewer bench_hw live_record_display player recording_player fps_control ts_sync)
         if(TARGET hv_sample_${_sample})
             add_dependencies(bundle_libs hv_sample_${_sample})
         endif()

@@ -5,7 +5,7 @@
 HV Toolkit（ShiMetaPi Hybrid Vision Toolkit）**v2.0** 是面向事件相机（DVS/EVS）的高性能 C++17 SDK，统一采集事件数据流（EVS）与图像数据流（APS），自带零第三方依赖的 EVT2/EVT3 编解码。v2.0 完成核心重写：**USB / MIPI / Ethernet 三后端统一为同一套 `Camera` API**，公有 API 表面不再依赖任何第三方事件 SDK。
 
 > 本仓库为**预编译二进制发布版**（核心以 `.so` 闭源交付，仅公开头文件与示例源码）。
-> `lib/x86_64/` 为 x86_64 Linux 库（USB + Ethernet 后端），`lib/s100/` 与 `lib/x5/` 为 aarch64 库（MIPI + Ethernet 后端）。
+> `lib/x86_64/` 为 x86_64 Linux 库（USB + Ethernet 后端），`lib/s100/` 与 `lib/x5/` 为 aarch64 库（MIPI + Ethernet 后端），`lib/openEuler/` 为 openEuler RK3588 ARM64 库（USB + Ethernet 后端）。
 
 ## ✨ v2.0 特性
 
@@ -42,8 +42,9 @@ HV Toolkit（ShiMetaPi Hybrid Vision Toolkit）**v2.0** 是面向事件相机（
 
 | 依赖 | 用途 | 适用平台 |
 | --- | --- | --- |
-| **libusb-1.0**（`libusb-1.0-0`） | USB 后端运行库 | x86_64 |
-| **aarch64 交叉工具链**（`g++-aarch64-linux-gnu`） | s100/x5 交叉编译示例 | s100、x5（交叉编时） |
+| **libusb-1.0**（`libusb-1.0-0`） | USB 后端运行库 | x86_64、openEuler |
+| **aarch64 交叉工具链**（`g++-aarch64-linux-gnu`） | ARM64 交叉编译示例 | s100、x5、openEuler（交叉编时） |
+| **openEuler 开发 sysroot** | 目标 libc/libstdc++、libusb 头文件、库及 pkg-config 元数据 | openEuler（交叉编时） |
 | **OpenCV** | `ts_sync` / `player` / `live_record_display` 示例（交叉编用仓库自带 `third_party/aarch64_opencv`） | 示例可选 |
 
 > v2.0 **不再依赖**第三方事件 SDK —— 编解码为独立 clean-room 实现。OpenCV 仅在示例可视化中用到，非核心依赖。
@@ -54,7 +55,7 @@ HV Toolkit（ShiMetaPi Hybrid Vision Toolkit）**v2.0** 是面向事件相机（
 
 - **C++ 标准**：C++17 或更高
 - **CMake**：3.16+
-- **操作系统**：Linux —— x86_64（USB + Ethernet 后端）；aarch64/S100 / X5（MIPI + Ethernet 后端）
+- **操作系统**：Linux —— x86_64（USB + Ethernet 后端）；aarch64/S100 / X5（MIPI + Ethernet 后端）；openEuler RK3588 ARM64（USB + Ethernet 后端）
 
 ### 构建
 
@@ -158,6 +159,48 @@ file out/x5/build/samples/cpp/get_started/hv_sample_get_started                 
 # OpenCV 类样例（player / live_record_display）用 third_party/ 自带 aarch64 OpenCV，7/7 全编
 ```
 
+#### openEuler（RK3588 ARM64 USB，交叉编译）
+
+openEuler 平台预编译库位于 `lib/openEuler/`，使用 USB + Ethernet 后端。
+当前 APX014BA USB 录制流程已在 RK3588 openEuler 板卡验证；不依赖 S100/X5 的 MIPI/RDK 库。
+本仓库仅编译示例并链接预编译库，无需重编 openEuler 系统固件或摄像头固件。
+
+前置：使用上文 S100 步骤安装的 Arm GNU 11.3 工具链，并准备与板卡运行环境匹配的
+openEuler **开发 sysroot**（含 libc、libstdc++、libusb 的头文件、库及 `.pc` 文件）。
+Ubuntu 主机还需安装 `cmake` 和 `pkg-config`：
+
+```bash
+sudo apt-get install build-essential cmake pkg-config
+export OPENEULER_TOOLCHAIN_PREFIX=/opt/arm-gnu-toolchain-11.3.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu
+export OPENEULER_SYSROOT=/path/to/openEuler-development-sysroot
+```
+
+`OPENEULER_TOOLCHAIN_PREFIX` 不带末尾的 `-`；sysroot 应包含 `usr/include/libusb-1.0`
+及目标 libusb 库。请替换上面的 sysroot 路径，不要使用 Ubuntu 主机的库目录。
+
+构建：
+
+```bash
+BUILD_JOBS=4 ./run.sh samples openEuler   # 配置、编译并列出示例产物
+# 或 ./run.sh build openEuler
+sha256sum -c SHA256SUMS                  # 校验随仓库发布的预编译库
+```
+
+验证产物：
+
+```bash
+ls build_release_openEuler/libshimetapi_*.so
+file build_release_openEuler/samples/cpp/record_openEuler/hv_sample_record_openEuler
+# 应为 ELF 64-bit ARM aarch64
+```
+
+产物目录固定为 `build_release_openEuler/`，编译 `get_started`、`callback`、`record`、
+`record_openEuler`、`viewer`、`bench_hw` 六个示例。GUI 示例默认关闭，
+`fps_control`、`ts_sync` 不在该平台编译；离线可视化在 Ubuntu 主机运行。
+openEuler 必须显式指定，通用 ARM64 自动选择仍为 S100。
+更换工具链或 sysroot 后，先重命名旧构建目录，再重新配置，避免复用旧路径缓存。
+更多配置见 [openEuler 工具链说明](toolchains/openEuler/README.md)。
+
 在自己的工程中链接（CMake）：
 
 ```cmake
@@ -182,11 +225,13 @@ HVToolkit::shimetapi_hv HVToolkit::shimetapi_codec HVToolkit::shimetapi_io)
 # x86_64   ready         .../lib/x86_64
 # s100     ready         .../lib/s100
 # x5       ready         .../lib/x5
+# openEuler ready        .../lib/openEuler
 ```
 
 ### 运行示例程序
 
-构建产物在 `out/<arch>/build/samples/cpp/<name>/hv_sample_<name>`（7 个）。
+x86_64、S100、X5 构建产物在 `out/<arch>/build/samples/cpp/<name>/hv_sample_<name>`；
+openEuler 在 `build_release_openEuler/samples/cpp/<name>/hv_sample_<name>`，示例数量按平台和依赖有所不同。
 采集类样例（get_started / callback / record / viewer）默认 USB 后端，
 支持 `--mipi`（MIPI EVS-only）/ `--mipi-hvs`（MIPI 双 VC，S100 板上用）切换；
 USB 模式可用前两个位置参数指定 VID/PID（默认 `0x1d6b 0x0105`）。
@@ -261,6 +306,65 @@ scp -r out/s100/build root@<板卡IP>:/app/
 # player — 离线回放录制文件
 /app/build/samples/cpp/player/hv_sample_player events.raw aps.avi
 ```
+
+#### openEuler（RK3588 USB）
+
+构建目录已捆绑四个 SDK 库，可使用 `scp -r` 传到板卡。板卡需有
+`libusb-1.0.so.0` 和兼容的 ARM64 运行库；以下 `<板卡IP>` 替换为实际地址。
+
+```bash
+# Ubuntu 主机，在 SDK 根目录执行
+scp -r build_release_openEuler root@<板卡IP>:/tmp/
+```
+
+在板卡执行（程序放 `/root`，录制文件写 `/tmp`，避免把大量录像写入根分区）：
+
+```bash
+mkdir -p /root/evs-openEuler-test
+cd /root/evs-openEuler-test
+cp /tmp/build_release_openEuler/libshimetapi_*.so* .
+for name in get_started callback record record_openEuler viewer bench_hw; do
+    cp "/tmp/build_release_openEuler/samples/cpp/$name/hv_sample_$name" .
+done
+export LD_LIBRARY_PATH="$PWD${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+unset HV_USB_APS_LEGACY_BRIDGE_WAIT HV_APS_DUMP_DIR
+
+./hv_sample_get_started
+./hv_sample_callback
+./hv_sample_viewer
+./hv_sample_bench_hw 0x1d6b 0x0105 5
+./hv_sample_record_openEuler --duration 10
+```
+
+逐个运行，采集时关闭其他占用相机的应用。`record_openEuler` 丢弃前 10 张不同 APS，
+打印 `initializing APS n/10`，第 11 张新 APS 就绪并打开输出后才开始正式计时。
+初始化期间不保存 EVS/APS，正式录制使用共同的主机时钟截止点，收尾更新 AVI 平均帧率。
+这是一项启动规避策略，不代表硬件同步或设备根因修复；EVS 按完整包保存，不逐事件精确裁切。
+原 `record` 示例保留原有录制行为。
+
+输出为 `/tmp/hv_record_openEuler.raw`、`/tmp/hv_record_openEuler.avi` 和
+`/tmp/hv_record_openEuler.avi.timestamps.csv`。每次运行会覆盖同名文件；
+运行前用 `df -h /tmp /root` 检查容量，10 秒 APS 约 400MB，另需 RAW 空间。
+正常等待程序收尾，再在 Ubuntu 主机取回文件：
+
+```bash
+mkdir -p recordings/openEuler
+scp root@<板卡IP>:/tmp/hv_record_openEuler.raw recordings/openEuler/
+scp root@<板卡IP>:/tmp/hv_record_openEuler.avi recordings/openEuler/
+scp root@<板卡IP>:/tmp/hv_record_openEuler.avi.timestamps.csv recordings/openEuler/
+
+# Ubuntu 桌面主机构建和播放，需安装 libopencv-dev
+./run.sh samples x86_64
+PLAYER=out/x86_64/build/samples/cpp/recording_player/hv_sample_recording_player
+"$PLAYER" recordings/openEuler/hv_record_openEuler.raw recordings/openEuler/hv_record_openEuler.avi
+# 无窗口校验：上面的播放指令末尾加 --check
+```
+
+CSV 与 AVI 保持同目录同名，播放器自动读取 APS 采集时间戳。
+空格暂停，`a/d` 前后逐帧，`r` 重播，`q` 退出。
+EVS/APS 起点对齐为近似对齐，不保证硬件同步。示例仅调用 SDK 编解码接口，
+不包含 EVS 解码实现。详见 [录制说明](samples/cpp/record_openEuler/README.md)
+与 [播放说明](samples/cpp/recording_player/README.md)。
 
 ### Python 示例
 
@@ -376,11 +480,12 @@ shimetapi_Hybrid_vision_toolkit/
 ├── lib/                        # 预编译库（闭源二进制）
 │   ├── x86_64/                 # x86_64：USB + Ethernet 后端（含 python/ 绑定模块）
 │   ├── s100/                   # S100 aarch64：MIPI + Ethernet 后端
-│   └── x5/                     # X5 aarch64：MIPI + Ethernet 后端
-├── toolchains/                 # 交叉工具链文件（aarch64-linux-gnu）
+│   ├── x5/                     # X5 aarch64：MIPI + Ethernet 后端
+│   └── openEuler/              # openEuler RK3588 ARM64：USB + Ethernet 后端
+├── toolchains/                 # 交叉工具链文件（含 openEuler/toolchain.cmake）
 ├── third_party/                # aarch64 OpenCV（交叉编 OpenCV 类示例用）
 ├── samples/                    # 示例
-│   ├── cpp/                    # C++ 示例（x86_64 最多 9 个）
+│   ├── cpp/                    # C++ 示例（按平台与依赖启用）
 │   └── python/                 # Python 示例
 ```
 
@@ -391,6 +496,8 @@ shimetapi_Hybrid_vision_toolkit/
 | `get_started` | 最小采集（同步 GetFrame） | USB / `--mipi` | `hv_sample_get_started [vid pid] [--mipi]` |
 | `callback` | 事件 + APS 异步回调 | USB / `--mipi` / `--mipi-hvs` | `hv_sample_callback [--mipi-hvs]` |
 | `record` | EVS+APS 混合录制到 /tmp | USB / `--mipi` / `--mipi-hvs` | `hv_sample_record [--duration S] [--mipi-hvs]` |
+| `record_openEuler` | openEuler USB 初始化丢帧后定时录制 | USB | `hv_sample_record_openEuler --duration 10` |
+| `recording_player` | Ubuntu 回放板卡 RAW/AVI 与时间戳 CSV | 离线 | `hv_sample_recording_player events.raw images.avi [--check]` |
 | `viewer` | 实时采集 + 解码计数 | USB / `--mipi` / `--mipi-hvs` | `hv_sample_viewer [--mipi]` |
 | `bench_hw` | USB 实机吞吐基准 | USB | `hv_sample_bench_hw [vid pid duration_s]` |
 | `live_record_display` | MIPI-HVS 实时预览 + 录制（OpenCV） | MipiHvs | `hv_sample_live_record_display [--no-display] [--evs-prefix s] [--aps-prefix s]` |

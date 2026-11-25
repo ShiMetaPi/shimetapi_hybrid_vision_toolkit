@@ -2,7 +2,7 @@
 #
 # run.sh — HV Toolkit 预编译版一站式入口
 #
-# 本仓库以预编译 .so 交付（lib/x86_64、lib/s100、lib/x5），run.sh 只做三件事：
+# 本仓库以预编译 .so 交付（lib/x86_64、lib/s100、lib/x5、lib/openEuler），run.sh 只做三件事：
 # 编样例（链接预编译库）、安装（头文件+库到系统）、部署 Python 模块。
 # MIPI 帧率档由 DeviceConfig.evs_fps 运行时选择（无需重编 .so）。
 #
@@ -14,7 +14,7 @@
 #   ./run.sh --list                            列出预编译架构与就绪状态
 #   ./run.sh help
 #
-# arch ∈ {x86_64, s100, x5}；缺省 = 本机架构（aarch64 → s100，其余 → x86_64）
+# arch ∈ {x86_64, s100, x5, openEuler}；缺省 = 本机架构（aarch64 → s100，其余 → x86_64）
 # 构建目录与源码仓同布局：out/<arch>/build（三个架构互不覆盖）
 # 交叉编 s100/x5 样例：自动使用仓库自带 toolchains/toolchain-aarch64-linux-gnu.cmake
 # （需系统装有 aarch64-linux-gnu-g++，Ubuntu: apt install g++-aarch64-linux-gnu）；
@@ -25,11 +25,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SAMPLE_NAMES="get_started callback record viewer bench_hw live_record_display player fps_control ts_sync"
+SAMPLE_NAMES="get_started callback record record_openEuler viewer bench_hw live_record_display player recording_player fps_control ts_sync"
 
 # 平台构建目录（与源码仓 run.sh 同布局：out/<arch>/build）
 build_dir_for() {
-    printf '%s/out/%s/build' "$SCRIPT_DIR" "$1"
+    if [ "$1" = "openEuler" ]; then
+        printf '%s/build_release_openEuler' "$SCRIPT_DIR"
+    else
+        printf '%s/out/%s/build' "$SCRIPT_DIR" "$1"
+    fi
 }
 BUILD_DIR=""   # 由各命令按 arch 填充
 
@@ -43,11 +47,12 @@ resolve_arch() {
             esac
             ;;
         x86_64|x86|amd64) printf 'x86_64' ;;
+        openEuler|openeuler|openEuler_usb) printf 'openEuler' ;;
         s100|S100)        printf 's100' ;;
         x5|X5)            printf 'x5' ;;
         aarch64|arm64)    printf 's100' ;;   # 默认 aarch64 → s100；X5 需显式 -DHV_TOOLKIT_ARCH=x5
         *)
-            echo "ERROR: unknown arch '$1' (try: x86_64|s100|x5)" >&2
+            echo "ERROR: unknown arch '$1' (try: x86_64|s100|x5|openEuler)" >&2
             return 1
             ;;
     esac
@@ -70,7 +75,7 @@ arch_status() {
 
 do_list() {
     printf 'ARCH    STATUS        PREBUILT LIBS\n'
-    for a in x86_64 s100 x5; do
+    for a in x86_64 s100 x5 openEuler; do
         printf '%-8s %-13s %s\n' "$a" "$(arch_status "$a")" "$(arch_lib_dir "$a")"
     done
 }
@@ -93,6 +98,20 @@ do_build() {
     # 仓库自带的 toolchains/toolchain-aarch64-linux-gnu.cmake；否则提前报错
     # （不让 host 编译器编到链接期才 'file in wrong format'）。
     local cmake_args=()
+    if [ "$arch" = "openEuler" ]; then
+        cmake_args+=(-DBUILD_GUI_SAMPLES=OFF -DCMAKE_BUILD_TYPE=Release)
+        if [ "$(uname -m)" != "aarch64" ] && [ "$(uname -m)" != "arm64" ]; then
+            local has_openeuler_toolchain=0 option
+            for option in "$@"; do
+                case "$option" in
+                    -DCMAKE_TOOLCHAIN_FILE=*|--toolchain*) has_openeuler_toolchain=1 ;;
+                esac
+            done
+            if [ "$has_openeuler_toolchain" = "0" ]; then
+                cmake_args+=("-DCMAKE_TOOLCHAIN_FILE=$SCRIPT_DIR/toolchains/openEuler/toolchain.cmake")
+            fi
+        fi
+    fi
     if [ "$arch" = "s100" ] || [ "$arch" = "x5" ]; then
         # SDK 路径：s100 用 S100_SYSROOT，x5 用 X5_SDK_ROOT
         if [ "$arch" = "x5" ] && [ -z "${X5_SDK_ROOT:-}" ]; then
@@ -137,7 +156,7 @@ do_build() {
     else
         cmake -S "$SCRIPT_DIR" -B "$BUILD_DIR" "$@"
     fi
-    cmake --build "$BUILD_DIR" --parallel "$(nproc)"
+    cmake --build "$BUILD_DIR" --parallel "${BUILD_JOBS:-$(nproc)}"
 }
 
 do_install() {
@@ -179,6 +198,16 @@ do_pydeploy() {
 do_samples_list() {
     local s bin
     for s in $SAMPLE_NAMES; do
+        if [ "$s" = "record_openEuler" ] && [ "$1" != "openEuler" ]; then
+            echo "SKIP $s (openEuler only)"; continue
+        fi
+        if [[ "$s" =~ ^(fps_control|ts_sync)$ ]] && [ "$1" != "x86_64" ]; then
+            echo "SKIP $s (x86_64 only)"; continue
+        fi
+        if [[ "$s" =~ ^(live_record_display|player|recording_player|ts_sync)$ ]] &&
+           grep -q '^BUILD_GUI_SAMPLES:BOOL=OFF$' "$(build_dir_for "$1")/CMakeCache.txt"; then
+            echo "SKIP $s (BUILD_GUI_SAMPLES=OFF)"; continue
+        fi
         bin="$(build_dir_for "$1")/samples/cpp/$s/hv_sample_${s}"
         if [ -x "$bin" ]; then
             echo "OK   $bin"

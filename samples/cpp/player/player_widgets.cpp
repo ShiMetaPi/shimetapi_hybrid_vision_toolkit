@@ -792,14 +792,11 @@ bool dumpTimestamps(const std::string& raw_path, const std::string& avi_path,
         const size_t subframe_count = evs_frame.evs.size / Shimeta::codec::MipiRaw8Layout::kSubframeBytes;
         for (size_t sub = 0; sub < subframe_count; ++sub) {
             const uint8_t* data = evs_frame.evs.data + sub * Shimeta::codec::MipiRaw8Layout::kSubframeBytes;
-            uint64_t first_word = 0;
-            std::memcpy(&first_word, data, sizeof(first_word));
-            if ((uint32_t(first_word) & 0x00FFFFFFu) != Shimeta::codec::MipiRaw8Layout::kHeaderMask)
-                continue;
-
-            const uint64_t raw_timestamp = (first_word >> 24) & 0xFFFFFFFFFFULL;
-            out << "EVS," << evs_packet_index << ',' << sub << ',' << raw_timestamp
-                << ',' << raw_timestamp / 200 << ",1\n";
+            const auto timestamp = Shimeta::codec::extractEvsTimestamp(
+                data, Shimeta::codec::MipiRaw8Layout::kSubframeBytes);
+            if (!timestamp.valid) continue;
+            out << "EVS," << evs_packet_index << ',' << sub << ',' << timestamp.raw_timestamp
+                << ',' << timestamp.processed_timestamp << ",1\n";
         }
         ++evs_packet_index;
     }

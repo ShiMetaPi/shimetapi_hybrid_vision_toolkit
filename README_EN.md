@@ -398,3 +398,19 @@ Docs: https://forum.shimetapi.cn/wiki/zh/
 Community: https://forum.shimetapi.cn
 
 **HV Toolkit** — making event-camera development simple 🚀
+
+## openEuler RK3588 USB prebuilt support
+
+`lib/openEuler/` contains ARM64 USB/Ethernet SDK libraries. Core implementation
+source is not distributed. Public headers and sample sources are provided.
+`./run.sh build openEuler` builds samples into `build_release_openEuler/`.
+Set `OPENEULER_TOOLCHAIN_PREFIX` and `OPENEULER_SYSROOT` for cross-compilation;
+see [openEuler guide](toolchains/openEuler/README.md).
+
+`record_openEuler` records after discarding 10 initial APS frames, uses a common
+host recording deadline, and finalizes AVI average FPS. `fps_control` is excluded.
+Ubuntu playback uses [recording_player](samples/cpp/recording_player/README.md),
+built with `./run.sh build x86_64` when OpenCV is installed. Existing platforms
+retain their published libraries; only openEuler adds the optional
+`HybridWriter::setApsPlaybackDuration` implementation. Do not call this optional
+method when linking older platform libraries. Rebuild samples with matching headers.

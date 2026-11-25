@@ -20,3 +20,6 @@ Thumbs.db
 
 # Release repo: validation manuals live in the source repo, not here
 docs/
+
+# openEuler sample build output
+build_release_openEuler/
